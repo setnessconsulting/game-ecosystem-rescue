@@ -11,12 +11,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src tests scripts vite.config.ts vitest.config.ts",
+    "lint": "eslint src tests scripts vite.config.ts vitest.config.ts playwright.config.ts playwright.accessibility.config.ts",
     "test": "vitest run",
+    "test:smoke": "playwright test -c playwright.config.ts",
+    "test:a11y": "playwright test -c playwright.accessibility.config.ts",
     "verify:boundary": "node scripts/verify-boundary.mjs",
     "verify:no-random": "node scripts/verify-no-random.mjs",
     "verify:build-base": "node scripts/verify-build-base.mjs",
-    "verify": "npm run typecheck && npm run lint && npm test && npm run verify:boundary && npm run verify:no-random && npm run verify:build-base && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm test && npm run verify:boundary && npm run verify:no-random && npm run verify:build-base && npm run build && npm run test:smoke && npm run test:a11y"
   },
   "dependencies": {
     "phaser": "4.2.1",

@@ -13,6 +13,32 @@
   box-sizing: border-box;
 }
 
+/* Nothing may make the page scroll sideways: WCAG 2.2 SC 1.4.10 requires reflow at 320 CSS px and
+   at 400% zoom, and a single unbreakable string is enough to break it. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+code,
+.note,
+.version {
+  overflow-wrap: anywhere;
+}
+
+/* The table is the one element SC 1.4.10 exempts from reflow (it needs two dimensions to be
+   readable), so it scrolls inside its own box rather than widening the page. */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
 body {
   margin: 0;
   background: var(--paper);

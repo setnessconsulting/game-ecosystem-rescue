@@ -25,7 +25,8 @@ import { bandWord, describe, stressNote } from "./presentation.js";
 const canonical: Scenario = { runoffAt: (t) => (t < 10 ? 10 * SCALE : 0) };
 
 export default function App() {
-  const [trace, setTrace] = useState<TickResult[]>(() => run(1, canonical));
+  // Day 0 is the pristine pond: the player has not advanced anything yet.
+  const [trace, setTrace] = useState<TickResult[]>(() => run(0, canonical));
 
   const state: EcosystemState = trace[trace.length - 1]!.state;
   const residual = useMemo(() => loopResidual(trace), [trace]);
@@ -128,7 +129,7 @@ export default function App() {
         <p className="prose">
           <strong>Matter-loop check.</strong> The pond&apos;s nutrients, algae and detritus must balance every
           day — nothing appears from nowhere and nothing vanishes silently. Worst daily residual so far:{" "}
-          <strong>{residual.worst.toExponential(2)}</strong>
+          <strong data-testid="loop-residual">{residual.worst.toExponential(2)}</strong>
           {residual.worstTick === null ? "" : ` (day ${residual.worstTick})`}.
         </p>
         <p className="note">

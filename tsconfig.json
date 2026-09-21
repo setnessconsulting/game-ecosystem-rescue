@@ -21,6 +21,6 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src", "tests", "vite.config.ts", "vitest.config.ts"],
+  "include": ["src", "tests", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "playwright.accessibility.config.ts"],
   "exclude": ["node_modules", "dist", "playwright-report", "test-results"]
 }

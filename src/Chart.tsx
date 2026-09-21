@@ -76,32 +76,36 @@ export function Chart({ trace }: { trace: TickResult[] }) {
         ))}
       </svg>
 
-      <table>
-        <caption>Daily values behind the chart</caption>
-        <thead>
-          <tr>
-            <th scope="col">Day</th>
-            {series.map((s) => (
-              <th scope="col" key={s.label}>
-                {s.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {trace
-            .map((t, i) => ({ t, i }))
-            .filter(({ i }) => i % Math.max(1, Math.floor(trace.length / 12)) === 0 || i === trace.length - 1)
-            .map(({ t }) => (
-              <tr key={t.state.tick}>
-                <th scope="row">{t.state.tick}</th>
-                {series.map((s) => (
-                  <td key={s.label}>{s.valueAt(t).toFixed(1)}</td>
-                ))}
-              </tr>
-            ))}
-        </tbody>
-      </table>
+      {/* A data table is the one thing SC 1.4.10 exempts from reflow: it needs two dimensions to
+          stay readable. So the TABLE may scroll inside its own box; the page may not. */}
+      <div className="table-scroll">
+        <table>
+          <caption>Daily values behind the chart</caption>
+          <thead>
+            <tr>
+              <th scope="col">Day</th>
+              {series.map((s) => (
+                <th scope="col" key={s.label}>
+                  {s.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {trace
+              .map((t, i) => ({ t, i }))
+              .filter(({ i }) => i % Math.max(1, Math.floor(trace.length / 12)) === 0 || i === trace.length - 1)
+              .map(({ t }) => (
+                <tr key={t.state.tick}>
+                  <th scope="row">{t.state.tick}</th>
+                  {series.map((s) => (
+                    <td key={s.label}>{s.valueAt(t).toFixed(1)}</td>
+                  ))}
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

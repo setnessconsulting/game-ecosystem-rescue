@@ -2,6 +2,9 @@ name: CI
 
 # ER-02 acceptance (ACCEPTANCE_CONTRACT §3.1): runs on PR + main, credential-free, under 15
 # minutes, and gates every change on the same command a human runs locally (`npm run verify`).
+# The browser suites need a browser: Chromium only, because the artifact under test is the built
+# app and cross-engine trace equality (Chromium/Firefox/WebKit) is an ER-03 release gate, not a
+# per-PR one.
 on:
   push:
     branches: [main]
@@ -21,4 +24,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm run verify
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            test-results/**
+            playwright-report/**
+          retention-days: 7
