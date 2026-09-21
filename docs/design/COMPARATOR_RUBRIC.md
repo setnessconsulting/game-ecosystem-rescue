@@ -36,8 +36,8 @@ Notes (convergence record):    ___
 6. **Visual cause/effect** — paired screenshots/video: intervention → visible response ≤2 simulated days; equivalent text state captured simultaneously.
 7. **Onboarding** — fresh-player test (target: ≥4 of 5 unaided completions of M1 in playtest; interim CI proxy: guided flow completable keyboard-only).
 8. **Feedback/recovery** — revision path exercised with zero punitive UI observed; hint ladder used without answer-reveal.
-9. **Accessibility** — axe reports clean on all routes/states; keyboard-only full-mission recording; human SR (NVDA or VoiceOver) run of one mission; 360 px + 200% zoom screenshots; non-drag paths exercised.
-10. **Performance** — PERFORMANCE_BUDGETS §7 measurement sheets pass on reference matrix.
+9. **Accessibility** — axe reports clean on all routes/states; keyboard-only full-mission recording; human SR run of one mission on **NVDA and VoiceOver at minimum** (the contract's floor — ACCEPTANCE_CONTRACT §6.2; add JAWS where available, it is not required); 320 CSS px reflow fixture **and** 360 px + 200% zoom screenshots (SC 1.4.10's 320 px bar is a separate, narrower case from the phone layout); non-drag paths exercised.
+10. **Performance** — PERFORMANCE_BUDGETS §3–§6 measurement sheets pass on the reference matrix.
 11. **Art direction** — style-guide conformance; contrast checks; no comparator-style borrowing (side-by-side check).
 12. **Animation** — cause/effect cue catalog; reduced-motion equivalence screenshots.
 13. **Audio/game feel** — muted-first flow complete without disadvantage; audio-on adds ambience only.

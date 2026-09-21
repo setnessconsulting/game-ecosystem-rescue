@@ -38,13 +38,16 @@ Release threshold = must pass on **R1 + R2 + R3 all browsers**; warning threshol
 | CSS total | 40 KB gz | 30 KB | |
 | Initial image/asset payload | 700 KB | 500 KB | Vector-style art per GDD §10; if ER-10 art exceeds, load post-boot progressively |
 | Audio payload | 0 B at boot (muted-first); ≤ 1.5 MB after opt-in, lazy | 1 MB | ADR-8 |
-| Total first-visit transfer | ≤ 1.25 MB | 1.0 MB | ≈ 10–12 s on 1 Mbps classroom Wi-Fi worst case; < 3 s on 10 Mbps |
-| Cold start → title interactive (R1) | ≤ 6.0 s | 4.5 s | On R1 CPU + 10 Mbps |
+| Total first-visit transfer | ≤ 1.25 MB | 1.0 MB | Transfer-derived, so it is checked against the *slowest* supported link: ≈10–12 s at 1 Mbps worst case, ≈1 s at 10 Mbps. The release *threshold* applies at the R1 reference link below, not at the worst case — the worst case is why progressive rendering (row 4) exists |
+| Cold start → title interactive (R1) | ≤ 6.0 s | 4.5 s | On the R1 reference: CPU = 2018-class Celeron/ARM (≈4× slower than a 2022 laptop core), link = **10 Mbps / 40 ms RTT**. These two numbers are the gate; a tool profile that does not match them is a proxy, not the measurement |
 | Cold start → title interactive (R3) | ≤ 3.0 s | 2.2 s | |
 | Game-ready (habitat scene interactive, R1) | ≤ 9.0 s from nav start | 7 s | Title → briefing → habitat are progressive; briefing usable before scene finishes |
 | Lazy chunks after boot | ≤ 200 KB gz total | 150 KB | Variants/content modules |
 
-**Measurement method:** Lighthouse (Slow 4G/4× CPU throttle) + `performance.getEntriesByType('resource')` audit on R1/R3; Playwright trace assertion of transferred bytes in CI (fail on release-threshold breach). Manifest per-file sizes cross-checked against games-site `release-manifest.json` (source of truth for delivered bytes).
+**Measurement method.** Three obligations, in order of authority:
+1. **Reference matrix (authoritative):** R1/R3 VMs *calibrated to the R1 reference above* — record the CPU throttle factor and the link profile used, and attach both to the evidence. An uncalibrated runner (e.g. a stock GitHub-hosted runner) is not an R1 measurement and must not be labelled one.
+2. **Tool proxy (supporting):** Lighthouse, but **with the profile stated and its transfer budget checked against the reference link** — Lighthouse's default Slow-4G preset is ≈1.6 Mbps/150 ms RTT, which cannot hold a 1.25 MB first visit inside 6.0 s, so a Slow-4G run *false-fails* a compliant build and Slow-4G numbers may not be reported as R1 pass/fail. Use a custom throttle matching the reference link, or report the tool profile's own thresholds separately.
+3. **Byte accounting (CI):** Playwright trace assertion of transferred bytes (fail on release-threshold breach), cross-checked against the games-site `release-manifest.json` per-file sizes, which remain the source of truth for delivered bytes.
 
 ## 4. Input responsiveness
 

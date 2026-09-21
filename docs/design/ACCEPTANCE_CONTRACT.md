@@ -28,7 +28,7 @@
 | ER-12 GAME-328 | §5 (consolidated) | full gate sheet on release candidate SHA |
 | ER-13 GAME-329 | §5, §9 | immutable preview qualified; manifest hash-match; rollback rehearsal documented |
 | ER-14 GAME-330 | §5, §6.2, COMPARATOR_RUBRIC | human playtest ≥5 learners; SR manual review; comparator rubric ×2 reviewers; device matrix physical checks |
-| ER-15 GAME-331 | §3.5 | host contract conformance tests; standalone parity (no-host run identical) |
+| ER-15 GAME-331 | §3.5 | host contract conformance tests; standalone parity (no-host run identical); **privacy review of the host channel before activation** — HostContext/HostFacts are the only path by which anything leaves the page, so activating host mode requires a recorded review of exactly which fields cross the boundary and what the host may do with them (the standalone privacy posture in ADR-6 does not cover this path by construction) |
 | ER-16 GAME-332 | §10 | exact-SHA chain (source→build→promotion); release notes; Epic closeout packet |
 
 ## 3. Objective criteria by layer
@@ -78,7 +78,7 @@
 | 9 | Comparator/originality review passes frozen rubric | B ×2 reviewers | ER-14 |
 | 10 | Independent review bound to exact RC SHA | B (fresh-context packet) | ER-14 |
 | 11 | Immutable preview qualified before promotion | A | ER-13 |
-| 12 | Rollback documented **and exercised** | A | ER-PROMOTE |
+| 12 | Rollback documented **and exercised** | A | ER-13 (owns the rollback rehearsal; the release gate consumes its evidence) |
 | 13 | Human playtest judgments recorded as human evidence (no AI-fabricated fun/clarity approval) | B | ER-14 |
 
 Promotion (production games-site) is forbidden until gates 1–11 pass on the exact candidate [G]. AI/automated output may support but never substitute evidence classes marked B.
@@ -92,7 +92,7 @@ Use PERFORMANCE_BUDGETS §3–§7 sheets verbatim as the ER-12/ER-14 artifact. A
 ### 6.1 Automated (necessary, not sufficient)
 - axe clean on all routes + major states (guided/independent mission, degraded mode, fatal shell, restore dialog, settings).
 - Keyboard-only E2E completes one guided mission.
-- CI checks: visible focus (computed style), touch-target sizes ≥44 px, contrast ≥ AA, 200% reflow fixture, 360 px layout fixture.
+- CI checks: visible focus (computed style), touch-target sizes ≥44 px, contrast ≥ AA, 200% reflow fixture, **320 CSS px reflow fixture (WCAG 2.2 SC 1.4.10: no two-dimensional scrolling at 320 CSS px, i.e. 400% zoom on a 1280 px viewport — this is *narrower* than the 360 px phone layout and is its own fixture, because the AA claim is being made for both)**, 360 px layout fixture.
 
 ### 6.2 Manual (human, cannot be automated)
 - Screen-reader flow review (NVDA + VoiceOver at minimum) of one full mission — comprehension, not just reachability.

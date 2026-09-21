@@ -62,7 +62,7 @@ Authority flow (one direction): **scenario → kernel state → mission machine 
 - **RenderSnapshot** (kernel→Phaser): read-only projection — per-organism band/trend/density hints, clarity/DO derived visuals, event flags for effects (bubble burst, surfacing). Computed by the presentation layer from state+events; Phaser holds **no** other state source.
 - **SceneIntent** (Phaser→kernel/UI): bounded, token-stamped requests (`select-organism`, `focus-organism`, `inspect`) — presentation-only requests; ecological actions never originate in the scene (mirrors sibling SceneIntent contract).
 - **Ownership:** Phaser owns transforms, animation, particles, camera, pointer world-mapping. React owns all semantic info (cards, tables, charts, controls). Every Phaser-presented fact has a React equivalent (a11y contract; UX §9).
-- **Lifecycle:** single habitat scene; scene restart on mission reset is a projection refresh — never a state re-source. Renderer failure behavior: §D-9.
+- **Lifecycle:** single habitat scene; scene restart on mission reset is a projection refresh — never a state re-source. Renderer failure behavior: §D-8.
 
 ## D-5. React semantic layer & accessibility architecture (ER-08)
 
@@ -77,7 +77,7 @@ Authority flow (one direction): **scenario → kernel state → mission machine 
 
 ## D-6. Scenario/content contract (ER-04)
 
-- Versioned JSON documents (`scenarioVersion`, `simModelVersion` range required), strict validated loader: unknown/missing/malformed fields ⇒ fail-closed error state (§D-9), never partial running (GAME-318 contract).
+- Versioned JSON documents (`scenarioVersion`, `simModelVersion` range required), strict validated loader: unknown/missing/malformed fields ⇒ fail-closed error state (§D-8), never partial running (GAME-318 contract).
 - Schema sections (per GAME-320): species/roles + trophic links (mapping to R-11 ids), abiotic ranges, initial conditions, disruption timeline, evidence definitions, interventions (from SCIENCE_MODEL §10 vocabulary + constraints/costs), hypotheses/prediction affordances, mission criteria (multidimensional bands + resilience probes), accessibility labels/descriptions, provenance references (source-ledger IDs), simplification notes.
 - Content lives in code-reviewable data files; loading is deterministic (no remote fetch at runtime beyond same-origin immutable assets).
 

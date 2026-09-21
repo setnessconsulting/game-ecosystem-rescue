@@ -17,7 +17,7 @@ This directory is the **governing contract** for implementing Ecosystem Rescue (
 | 9 | [COMPARATOR_RUBRIC.md](COMPARATOR_RUBRIC.md) | The ER-14 observational scoring instrument |
 | 10 | [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) | Evidence-derived budgets, reference matrix, enforcement protocol |
 | 11 | [ACCEPTANCE_CONTRACT.md](ACCEPTANCE_CONTRACT.md) | Verifiable gates per story + release gates + evidence classes |
-| 12 | [DECISIONS.md](DECISIONS.md) | Decision ledger D-01…D-29 (no release-blocking TBDs) |
+| 12 | [DECISIONS.md](DECISIONS.md) | Decision ledger D-01…D-31 (D-30/D-31 record the calibration discipline and the F-2 resolution; D-31's numeric values are provisional and its evidence lives in SCIENCE_MODEL §9.1) |
 | — | [EVIDENCE.md](EVIDENCE.md) | Measured sibling/portfolio evidence backing decisions |
 | — | [REVIEW_ER01.md](REVIEW_ER01.md) | Independent adversarial review packet for this design freeze |
 
