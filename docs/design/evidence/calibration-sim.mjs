@@ -1,10 +1,16 @@
 // calibration-sim.mjs — GAME-317 / ER-01 evidence harness (NOT production code)
 //
-// Purpose: implement the SCIENCE_MODEL v1.1 rules in plain JS and verify that the frozen
-// parameter set (pc1-params-1.1) satisfies every §11 calibration commitment and sanity test,
-// plus the MS-LS2-3 matter-loop conservation identity (§5).
+// Purpose: implement SCIENCE_MODEL v1.2's rules in plain JS and test the provisional parameter
+// set (`pc1-params-1.2`) against every §11 calibration commitment and sanity test, plus the
+// MS-LS2-3 matter-loop conservation identity (§5).
 //
 // Run: node docs/design/evidence/calibration-sim.mjs      (exit 0 = all checks pass)
+//      node docs/design/evidence/calibration-sim.mjs --crash=ceiling --growth=pool   (variants)
+//
+// STATUS (2026-09-21, GAME-317): the RULE STRUCTURE is frozen — this harness is the authority on
+// what the frozen rules do. The VALUES are provisional and the harness does NOT pass yet: see
+// EVIDENCE.md §5 for exactly which §11 windows fail, by how much, and the measured diagnosis
+// (the nutrient loop's return flux, finding F-6). ER-04 owns the numeric demonstration.
 //
 // Zero dependencies (node: builtins only). Floats are used here; the shipping kernel (ER-03)
 // uses fixed-point integers per TECHNICAL_DESIGN §D-3. Every operation in the rule set is a
@@ -34,58 +40,71 @@
 
 import { pathToFileURL } from "node:url";
 
-export const SIM_MODEL_VERSION = "pond-crisis-1.1";
-export const PARAM_SET_VERSION = "pc1-params-1.1";
+export const SIM_MODEL_VERSION = "pond-crisis-1.2";
+export const PARAM_SET_VERSION = "pc1-params-1.2";
 
 // ---------------------------------------------------------------------------
-// Parameters — candidate set `pc1-params-1.1` (must match SCIENCE_MODEL §9 exactly)
+// Parameters — provisional set `pc1-params-1.2` (must match SCIENCE_MODEL §9 exactly).
+// STATUS: the STRUCTURE below is frozen (GAME-317 decision (d), see SCIENCE_MODEL §9.1); the
+// VALUES are the best the calibration search has reached and do NOT yet satisfy every §11 window.
+// The harness is expected to report failures — read the summary line, not the exit code, and see
+// EVIDENCE.md §5 for which windows fail and why. This file is the acceptance test ER-04 inherits.
 // ---------------------------------------------------------------------------
 export const P = {
-  // producers (R-01/R-02/R-03/R-04)
-  algaeGrowthRate: 0.30,        // R-01 logistic intrinsic rate (top of the declared range)
-  maxAlgae: 100,                // R-01 index cap
-  bloomCrashThreshold: 70,      // R-01b bloom density above which the standing bloom sheds biomass
-  bloomCrashRate: 1.00,         // R-01b fraction of the excess bloom shed per tick (self-shading /
-                                // cell death at bloom density)
-  algaeSenescence: 0.012,       // R-04 fraction of algae -> detritus /tick
-  weedGrowthRate: 0.12,         // R-02
+  // producers (R-01/R-01b/R-02/R-03/R-04)
+  algaeGrowthRate: 0.30,        // R-01 self-shading growth rate (range top)
+  maxAlgae: 100,                // R-01 the logistic ceiling = the self-shading capacity (NOT the pool)
+  nutrientHalfSaturation: 28,   // R-01 pool level at half the growth rate (the supply factor)
+  bloomCrashThreshold: 70,      // R-01b density reading only — retired by the frozen reading
+  bloomCrashRate: 2.00,         // R-01b share of the growth shortfall shed per tick (range top)
+  algaeSenescence: 0.028,       // R-04 fraction of algae -> detritus /tick
+  weedGrowthRate: 0.20,         // R-02
   weedK: 85,                    // R-02 weed carrying capacity
-  weedSenescence: 0.020,        // R-04
+  weedSenescence: 0.050,        // R-04
   shadingCoefficient: 0.95,     // R-03 clarity loss per algae index point
   // consumers (R-10/R-11: per-link removal is directly parameterized)
-  halfSaturation: 5,            // R-10 Holling half-saturation, GRAZING (prey index at half intake)
-  predationHalfSaturation: 40,  // R-10 Holling half-saturation, PREDATION (separate: a predator's
+  halfSaturation: 28,           // R-10 Holling half-saturation, GRAZING (prey index at half intake).
+                                // NOT a free knob: a low value makes the pristine algal equilibrium
+                                // unstable (the logistic's ascending branch has no stable root), which
+                                // drives the undisturbed pond onto a bloom-dominated branch. See F-6.
+  predationHalfSaturation: 56,  // R-10 Holling half-saturation, PREDATION (separate: a predator's
                                 // functional response saturates at a different prey density than a
                                 // filter-feeder's, and a single shared value cannot both keep the
                                 // grazers' intake near saturation at bloom density and keep the
                                 // predator from over-taking sparse prey; see EVIDENCE.md)
-  removalRate: { flea: 0.030, mayfly: 0.030, snail: 0.030, bluegill: 0.013, dragonfly: 0.013 },
-  egestionFraction: 0.02,       // R-20 share of removed prey mass egested (not assimilated)
-  maintenance: 0.03,            // R-12 maintenance respiration as a fraction of assimilated intake
-  carryingCapacity: { flea: 140, mayfly: 120, snail: 128, bluegill: 100, dragonfly: 50 }, // R-12 recruitment cap
-  starveBase: 0.02,             // R-41 starvation base mortality
+  removalRate: { flea: 0.030, mayfly: 0.042, snail: 0.030, bluegill: 0.010, dragonfly: 0.010 },
+  egestionFraction: 0.096,      // R-20 share of removed prey mass egested (not assimilated)
+  maintenance: 0.1372,          // R-12 maintenance respiration as a fraction of assimilated intake
+  carryingCapacity: { flea: 71, mayfly: 61, snail: 65, bluegill: 84, dragonfly: 42 }, // R-12 recruitment cap
+  starveBase: 0.02,             // R-41 starvation base mortality (unreachable under R-12's mass
+                                // form — see SCIENCE_MODEL R-41's recorded limitation)
   starveEscalation: 0.5,        // R-41 +50% per tick beyond the 3rd hungry tick
   starveCap: 5,                 // R-41 max multiplier
-  backgroundMortality: 0.010,   // R-12 /tick
+  backgroundMortality: 0.006,   // R-12 /tick
   // detritus / nutrients (closed loop with exports)
-  decompRate: 0.38,             // R-21 fraction of detritus decomposed /tick
-  mineralizationFraction: 0.90, // R-21 share of decomposed matter returned to the nutrient pool
-  backgroundInflow: 0.627,      // R-30 constant watershed nutrient inflow /tick (settles N at the reference)
-  nutrientSinkRate: 0.05,       // R-30 fraction of the nutrient EXCESS over the reference settling/denitrifying /tick
-  nutrientReference: 50,        // R-30 sediment-water exchange equilibrium: net settling above it, no net release below
-  exportFraction: 0.15,         // R-20/R-21b share of consumer mortality + egestion leaving the pond
+  decompRate: 0.40,             // R-21 fraction of detritus decomposed /tick
+  mineralizationFraction: 0.95, // R-21 share of decomposed matter returned to the nutrient pool
+                                // (the remainder is buried). NOTE: the return flux is
+                                // mineralizationFraction × decompRate × detritus and is therefore
+                                // proportional to the detritus stock — it grows exactly when the
+                                // canonical chain needs the pool to fall. See F-6.
+  backgroundInflow: 0.344,      // R-30 constant watershed nutrient inflow /tick (settles N at the reference)
+  nutrientSinkRate: 0.0202,     // R-30 fraction of the nutrient EXCESS over the reference settling/denitrifying /tick
+  nutrientReference: 21,        // R-30 sediment-water exchange equilibrium: net settling above it, no net release below
+  exportFraction: 0.070,        // R-20/R-21b share of consumer mortality + egestion leaving the pond
   // oxygen (R-22/R-23)
   o2Saturation: 9.0,
-  reAeration: 0.12,
+  reAeration: 0.084,
   reAerationAerated: 0.30,      // §10 aeration intervention value
-  o2PerDecomp: 0.040,           // O2 cost per unit of decomposed matter (O2 demand tracks the sediment stock)
-  o2PerPhoto: 0.001,
+  o2PerDecomp: 0.040,           // O2 cost per unit of decomposed matter — sets the DO trough depth
+                                // jointly with the detritus FLUX (o2PerDecomp × decomposition)
+  o2PerPhoto: 0.00048,
   photoCap: 0.5,
-  o2RespirationBasal: 0.05,
+  o2RespirationBasal: 0.100,
   // stress (R-40)
   stressWindow: 2,              // running-average window (ticks)
-  stressMortality: 0.15,        // max per-tick mortality at doAvg <= severe
-  thresholds: {                 // onset / severe (mg/L)
+  stressMortality: 0.20,        // max per-tick mortality at doAvg <= severe
+  thresholds: {                 // onset / severe (mg/L) — R-40's frozen ramp, §6.3
     mayfly:    { onset: 5.5, severe: 3.0 },
     flea:      { onset: 4.0, severe: 2.0 },
     dragonfly: { onset: 4.0, severe: 2.0 },
@@ -104,19 +123,21 @@ const POP_CAP = 100, SED_CAP = 100, NUT_CAP = 100, DO_CAP = 15;
 const CONSUMER_ORDER = [...CONSUMERS]; // FROZEN evaluation order (SCIENCE_MODEL §6.5)
 
 // ---------------------------------------------------------------------------
-// Canonical spring pond — the undisturbed fixed point (see anchorEquilibrium)
-// Values are written by the solver in §"canonical anchor" below and frozen here.
+// Canonical spring pond — the undisturbed fixed point of `pc1-params-1.2`, produced by the
+// calibration settle (the watershed inflow is controlled so the nutrient index rests on the
+// reference; the values are written by `.tmp/opt2.mjs` and frozen here). Drift over 60 ticks is
+// ≈ 0.00 on every stock, which satisfies §11-1 in its strict form.
 // ---------------------------------------------------------------------------
 export const CANONICAL_INITIAL = Object.freeze({
-  nutrients: 50.0, algae: 38.2, weeds: 65.0,
-  flea: 36.6, mayfly: 20.2, snail: 27.8, bluegill: 33.9, dragonfly: 16.9,
-  sediment: 19.0, do: 7.60,
+  nutrients: 21.0, algae: 53.0, weeds: 49.4,
+  flea: 30.1, mayfly: 21.7, snail: 27.0, bluegill: 16.3, dragonfly: 8.1,
+  sediment: 14.0, do: 5.40,
 });
 
 // Canonical disruption: the scenario injects farm-fertilizer + septic runoff during the
-// loading phase (SCIENCE_MODEL §2). Magnitude is set so the nutrient index rises to ~90.
+// loading phase (SCIENCE_MODEL §2). Magnitude is set so the nutrient index rises toward ~85.
 export const CANONICAL_RUNOFF_DAYS = 10;
-export const CANONICAL_RUNOFF_PER_DAY = 9.0;
+export const CANONICAL_RUNOFF_PER_DAY = 10.0;
 
 export function canonicalRunoff(tick) {
   return tick < CANONICAL_RUNOFF_DAYS ? CANONICAL_RUNOFF_PER_DAY : 0;
@@ -136,6 +157,55 @@ function mulberry32(seed) {
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// ---------------------------------------------------------------------------
+// R-01b crash form — FROZEN reading is `shortfall` (the bloom sheds the part of its own losses
+// that its growth no longer covers). `density` (shed above a fixed bloom-density threshold) and
+// `ceiling` (shed above the instantaneous nutrient ceiling) are the two alternatives the review
+// disposition and the earlier session considered; both were measured and neither fires usefully
+// under a pool-keyed R-01 — see EVIDENCE.md §5. `both` takes the larger excess. The variants stay
+// reachable behind `--crash=…` so the F-4 claim remains reproducible rather than asserted.
+// ---------------------------------------------------------------------------
+export const CRASH_MODES = ["density", "ceiling", "both", "shortfall"];
+export const bloomCrashMode = { mode: "shortfall" };
+export function setBloomCrashMode(mode) {
+  if (!CRASH_MODES.includes(mode)) throw new Error(`unknown crash mode ${mode} (expected ${CRASH_MODES.join("|")})`);
+  bloomCrashMode.mode = mode;
+}
+// The bloom's natural losses (senescence + grazing) on the snapshot — the reference the
+// `shortfall` reading compares growth against.
+function naturalLosses(S, grazedAlgae) {
+  return P.algaeSenescence * S.algae + grazedAlgae.flea + grazedAlgae.mayfly + grazedAlgae.snail;
+}
+function crashThreshold(S, ceiling, growth, losses) {
+  const densityExcess = Math.max(0, S.algae - P.bloomCrashThreshold);
+  const ceilingExcess = Math.max(0, S.algae - ceiling);
+  switch (bloomCrashMode.mode) {
+    case "ceiling": return { key: "ceiling", excess: ceilingExcess, ref: ceiling };
+    case "both": return { key: "ceiling", excess: Math.max(densityExcess, ceilingExcess), ref: ceiling };
+    case "shortfall": return { key: "ceiling", excess: Math.max(0, losses - growth), ref: ceiling };
+    default: return { key: "density", excess: densityExcess, ref: P.bloomCrashThreshold };
+  }
+}
+// ---------------------------------------------------------------------------
+// R-01 growth limitation. The FROZEN reading is `supply`: the logistic ceiling is the fixed
+// self-shading capacity p.maxAlgae, the pool scales the growth as a saturating supply factor, and
+// the available nutrient mass is a hard uptake constraint (R-01, GAME-317 decision (d)).
+// `capacity` is the same without the pool factor — it does NOT respond to a nutrient pulse at all
+// until the mass constraint binds (measured), which is why `supply` rather than `capacity` is the
+// frozen reading. `pool` is the pre-decision reading: nutrientCeiling = maxAlgae × min(1,
+// nutrients/100) as the logistic ceiling. Because the growth then falls with the pool, the bloom
+// self-arrests before it can exhaust its supply — the pool's equilibrium sits strictly above the
+// bloom, and R-04's "die en masse when nutrient supply collapses" can never happen (measured:
+// EVIDENCE.md "why the ceiling never binds"). All three stay reachable behind `--growth=…`.
+// ---------------------------------------------------------------------------
+export const GROWTH_LIMITS = ["pool", "capacity", "supply"];
+export const growthLimit = { mode: "supply" };
+export function setGrowthLimit(mode) {
+  if (!GROWTH_LIMITS.includes(mode)) throw new Error(`unknown growth limit ${mode} (expected ${GROWTH_LIMITS.join("|")})`);
+  growthLimit.mode = mode;
+}
+
 // R-10 functional response. Two half-saturations: filter-feeding grazers (flea/mayfly/snail)
 // saturate on the algal pool, predators (bluegill/dragonfly) on their prey stocks.
 const GRAZER_SET = new Set(["flea", "mayfly", "snail"]);
@@ -152,8 +222,12 @@ export function initialState(init = CANONICAL_INITIAL, seed = 1) {
     flea: init.flea, mayfly: init.mayfly, snail: init.snail,
     bluegill: init.bluegill, dragonfly: init.dragonfly,
     sediment: init.sediment, do: init.do,
+    // R-03 clarity is a derived quantity, but it must be present from tick 0 so traces are
+    // total (a missing field made every `first`/min over the history NaN).
+    clarity: clamp(100 - P.shadingCoefficient * init.algae, 0, 100),
     doHist: [init.do, init.do],
     hungry: { flea: 0, mayfly: 0, snail: 0, bluegill: 0, dragonfly: 0 },
+    crashActive: false,
     flags: { runoffDiverted: false, bufferStrip: false, aerated: false },
     events: [],
     rng: mulberry32(seed), seed,
@@ -203,22 +277,21 @@ export function step(state, cfg = {}) {
   // -- R-03 clarity (from snapshot algae)
   const clarity = clamp(100 - P.shadingCoefficient * S.algae, 0, 100);
 
-  // -- R-01 algal growth (nutrient ceiling from snapshot nutrients)
+  // -- R-01 algal growth. The logistic ceiling is the FIXED self-shading capacity p.maxAlgae;
+  //    the pool enters as a saturating SUPPLY factor and as a hard mass constraint
+  //    (uptake <= nutrients), so a bloom can overshoot the nutrient supply and starve (F-2).
   const ceiling = P.maxAlgae * Math.min(1, S.nutrients / 100);
-  const rawGrowth = ceiling > 0 && S.algae > 0
-    ? Math.max(0, P.algaeGrowthRate * S.algae * (1 - S.algae / ceiling))
+  const supplyFactor = S.nutrients / (P.nutrientHalfSaturation + S.nutrients);
+  let growthCeiling, growthFactor;
+  if (growthLimit.mode === "pool") { growthCeiling = ceiling; growthFactor = 1; }
+  else if (growthLimit.mode === "capacity") { growthCeiling = P.maxAlgae; growthFactor = 1; }
+  else { growthCeiling = P.maxAlgae; growthFactor = supplyFactor; }
+  const rawGrowth = growthCeiling > 0 && S.algae > 0
+    ? Math.max(0, P.algaeGrowthRate * growthFactor * S.algae * (1 - S.algae / growthCeiling))
     : 0;
   // The cells cannot take up more nutrient than is dissolved (mass, and it keeps the pool >= 0).
   const algaeGrowth = Math.min(rawGrowth, Math.max(0, S.nutrients));
   const nutrientUptakeAlgae = algaeGrowth; // mass: new algal biomass draws from the pool 1:1
-
-  // -- R-01b bloom die-back ("bloom crash"): the standing bloom sheds everything above a frozen
-  //    bloom-density threshold each tick, so the bloom plateaus there and any nutrient collapse
-  //    forces the die-back out at that rate. Density-keyed, NOT ceiling-keyed: R-01's ceiling is
-  //    the INSTANTANEOUS nutrient pool, so a bloom in this rule set tracks its ceiling and never
-  //    overshoots it — a ceiling-excess crash term provably never fires (verified in EVIDENCE.md;
-  //    the harness keeps a ceiling-excess variant behind `--crash=ceiling` for the record).
-  const algaeCrash = P.bloomCrashRate * Math.max(0, S.algae - P.bloomCrashThreshold);
 
   // -- R-04 senescence
   const algaeSenescence = P.algaeSenescence * S.algae;
@@ -250,6 +323,20 @@ export function step(state, cfg = {}) {
   };
   // NOTE: predator intake on grazer prey is drawn bluegill-then-dragonfly by the frozen
   // order above; that is a declared, deterministic simplification (SCIENCE_MODEL §6.5).
+
+  // -- R-01b bloom die-back ("bloom crash"). The bloom sheds an excess each tick at a frozen
+  //    rate. The frozen reading keys that excess to the SHORTFALL of growth against the bloom's
+  //    own losses (`senescence·A + grazing`): while the bloom is well supplied it sheds nothing,
+  //    and when the supply collapses the shortfall *is* the mass death — R-04's "bloom algae die
+  //    en masse when nutrient supply collapses", which a clamped logistic term cannot express
+  //    (measured: EVIDENCE.md "why the ceiling never binds"). Computed after the grazing block so
+  //    the shortfall sees the real grazing losses; every flow still comes from the pre-tick
+  //    snapshot, so the §6.5 single-update-pass order is preserved. The ceiling-keyed reading
+  //    (shed above the instantaneous nutrient ceiling), the fixed density threshold, and their
+  //    max stay available behind `--crash=ceiling|both|density` for the record.
+  const grazedAlgaeTotal = f.grazedAlgae.flea + f.grazedAlgae.mayfly + f.grazedAlgae.snail;
+  const bloomCrash = crashThreshold(S, ceiling, algaeGrowth, naturalLosses(S, f.grazedAlgae));
+  const algaeCrash = P.bloomCrashRate * bloomCrash.excess;
 
   // -- R-40 stress input: 2-tick running average of DO
   const doAvg = S.doHist.slice(-P.stressWindow).reduce((a, b) => a + b, 0) / P.stressWindow;
@@ -326,7 +413,7 @@ export function step(state, cfg = {}) {
   // ---- apply: single update pass from the snapshot ----
   const n = {};
   n.nutrients = S.nutrients + nutIn + mineralized - nutrientUptakeAlgae - nutrientUptakeWeeds - nutrientSinkLoss;
-  n.algae = S.algae + algaeGrowth - algaeCrash - algaeSenescence - (f.grazedAlgae.flea + f.grazedAlgae.mayfly + f.grazedAlgae.snail);
+  n.algae = S.algae + algaeGrowth - algaeCrash - algaeSenescence - grazedAlgaeTotal;
   n.weeds = S.weeds + weedGrowth - weedSenescence;
   for (const sp of CONSUMER_ORDER) {
     // f.predation is keyed by PREY species: only flea/mayfly/snail are eaten (R-11).
@@ -350,11 +437,12 @@ export function step(state, cfg = {}) {
       events.push({ rule: "R-40", kind: "stress-onset", organism: sp, doAvg });
     }
   }
-  if (S.algae > P.bloomCrashThreshold && state.algae <= P.bloomCrashThreshold) {
-    events.push({ rule: "R-01b", kind: "bloom-dieback-onset", algae: S.algae });
+  if (bloomCrash.excess > 0 && !state.crashActive) {
+    events.push({ rule: "R-01b", kind: "bloom-dieback-onset", mode: bloomCrash.key, algae: S.algae, ref: bloomCrash.ref });
   }
 
   n.tick = S.tick + 1;
+  n.crashActive = bloomCrash.excess > 0;
   n.doHist = [...S.doHist, n.do].slice(-4);
   n.hungry = S.hungry;
   n.flags = S.flags;
@@ -702,6 +790,14 @@ return { failures, results, passed, total: results.length };
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // `--crash=density|ceiling|both` selects the R-01b crash form; `--growth=pool|capacity` selects
+  // the R-01 growth limitation. Defaults are the frozen readings (density / pool); the variants
+  // are diagnostic and are what the F-2/F-4 claims are measured against.
+  const crashArg = process.argv.find((a) => a.startsWith("--crash="));
+  if (crashArg) setBloomCrashMode(crashArg.split("=")[1]);
+  const growthArg = process.argv.find((a) => a.startsWith("--growth="));
+  if (growthArg) setGrowthLimit(growthArg.split("=")[1]);
+  console.log(`R-01b crash form: ${bloomCrashMode.mode} | R-01 growth limitation: ${growthLimit.mode}`);
   const { failures } = runAllChecks();
   process.exit(failures === 0 ? 0 : 1);
 }

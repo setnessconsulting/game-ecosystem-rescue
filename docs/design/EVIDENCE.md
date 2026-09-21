@@ -46,45 +46,85 @@ Consequence: DECISIONS D-25 and TECHNICAL_DESIGN §D-10/§D-8 align exactly with
 - The Epic's planning provenance note states the currently connected GitHub app cannot read `andrewsetness/project-software-development-team`; consistent with that, this session did not read that repository and relied on GAME-316/317, project-game-maker contracts (read from `setnessconsulting/project-game-maker/docs/`), sibling repos, and external sources.
 - A fresh-context reviewer was available via the `opencode` CLI on this host; see REVIEW_ER01.md for the reviewer packet when committed.
 
-## 5. Calibration evidence — `docs/design/evidence/calibration-sim.mjs` (session 2026-09-21, packet-A follow-up)
+## 5. Calibration evidence — `docs/design/evidence/calibration-sim.mjs` (2026-09-21, second pass)
 
 Zero-dependency Node harness implementing every SCIENCE_MODEL rule and asserting the §11 commitments,
 the §11 sanity tests, the intervention-menu directions, and the §5 matter-loop identity. Run:
-`node docs/design/evidence/calibration-sim.mjs` (exit 0 = all pass).
+`node docs/design/evidence/calibration-sim.mjs` (exit 0 = all pass). Variants are reachable with
+`--crash=density|ceiling|both|shortfall` and `--growth=pool|capacity|supply`, which exist so the
+findings below are *reproducible* rather than asserted.
 
-**Verified (harness-passing) facts.** Rules implemented as frozen; the consumer mass budget is exact,
-so `Δ(nutrients+biomass+detritus) = inflow − settling sink − burial − export` holds to float precision
-*on every tick on which no stock is clamped at its cap*. The undisturbed pond is not hand-set: the
-harness settles it (nutrient index anchored at the reference by no less than a legal controller) and
-the candidate set produces a stationary fixed point — `{nutrients 50, algae 38.2, weeds 65.0, flea 36.6,
-mayfly 20.2, snail 27.8, bluegill 33.9, dragonfly 16.9, sediment 19.0, DO 7.60}` with 60-tick drift
-≈ 0.0 on every stock, i.e. §11-1 (baseline stability) in its strict form.
+**Status: 27 of 45 checks pass with the provisional set `pc1-params-1.2`.** The failures are the
+canonical-chain windows, the loop identity, and three robustness probes. Nothing in this section is a
+claim that the model is calibrated.
 
-**Not yet reproduced — the calibration gap (21 of 43 checks fail with the candidate set).**
-Measured with the candidate set: the canonical bloom peaks at **≈72 index** (window: ≥75 by day 12–18),
-clarity bottoms at ≈31 (window: <30), and **no DO excursion below ~7.3 occurs** (window: <5.0 days
-18–30), so the mayfly and bluegill windows do not trigger. Cause, established numerically:
-1. The bloom's equilibrium is `r·A(1−A/C) = G·holl(A) + senescence·A`. With `r ≤ 0.30`, the ceiling
-   `C` equal to the instantaneous nutrient pool (capped at 100, so reachable `C ≲ 92`), and the total
-   grazing capacity `G` at or above the minimum that keeps all three grazers alive, that equilibrium
-   lands at ≈70–73 — *below* the window.
-2. Because the bloom tracks its ceiling, a **ceiling-excess** crash term never fires; only a density
-   threshold crashes it, and a density threshold at/below the bloom's equilibrium simply caps the bloom
-   (measured: threshold 65 → peak 65.8; threshold 70 → peak 72.3) and yields ≈2/tick of die-back — far
-   less than the ≈10/tick detritus pulse needed to raise the sediment stock enough that
-   `o2PerDecomp × decompRate × sediment` can outrun re-aeration and pull DO below 5 mg/L.
-3. Lowering re-aeration (0.05, the bottom of the range) would make the *baseline* itself hypoxic
-   (≈5.2–6.4 mg/L), violating §11-1's healthy baseline — so the range does not contain a re-aeration
-   value that both keeps the pristine pond oxygenated and lets a ≤73-point bloom pull DO below 5.
+### 5.1 Verified facts (harness-passing)
 
-**Consequence for the package.** The §11 windows and the §9 legal ranges are mutually inconsistent as
-written: no parameter set inside the declared ranges satisfies them together. Resolutions, in
-SCIENCE_MODEL §9.1 (F-2): raise the `p.algaeGrowthRate` range top above 0.30, raise the nutrient
-index's internal cap above 100 (the pool cap is simultaneously the bloom ceiling), or restate the
-window in terms of the multiple of the baseline index. ER-04 owns that decision and the numeric
-demonstration; this harness is its acceptance test.
+1. **The consumer mass budget is exact.** `Δ(nutrients + biomass + detritus) = inflow − settling
+   sink − burial − export` holds to float precision on every tick on which no stock is clamped, and
+   `_flows` is emitted per tick for the evidence layer. This is the MS-LS2-3 anchor and it is the one
+   property that survived every structural change.
+2. **The undisturbed pond is solved, not hand-set, and is stationary.** The settle controls the
+   watershed inflow so the nutrient index rests on its reference; the frozen fixed point is
+   `{nutrients 21.0, algae 53.0, weeds 49.4, flea 30.1, mayfly 21.7, snail 27.0, bluegill 16.3,
+   dragonfly 8.1, sediment 14.0, DO 5.40}` with 60-tick drift ≈ 0.00 on every stock — §11-1 in its
+   strict form, with a complete food web (all five consumer species alive and self-sustaining).
+3. **Clarity and the mayfly window are reachable in the canonical run** (clarity < 30 on day 18;
+   mayflies < 20 on day 27), and the 10,000-tick soak stays bounded with no NaN.
 
-**Also verified, and binding on ER-03 (F-5).** When the nutrient index saturates at its 100 cap the
-end-of-tick clamp *destroys matter* and the loop identity fails (worst residual ≈ 2.9/tick). Cap
-behaviour must be defined as spill/reject rather than clamp, and the kernel must assert the identity
-per tick, not only at the end of a run.
+### 5.2 The canonical chain does not yet land in its windows (measured, not inferred)
+
+With `pc1-params-1.2`: bloom ≥ 75 first on **day 22** (window 12–18); clarity < 30 on **day 18**
+(window 15–25, PASS); **DO never reaches 5.0** (minimum 5.34, window < 5.0 days 18–30); mayflies < 20
+on **day 27** (window 30–40); bluegill never fall below 0.8 × baseline; DO ends at 5.45 (window < 5.0);
+the nutrient pool **pins at its 100 cap** and the end-of-tick clamp destroys matter (loop residual
+0.57/tick — see F-5).
+
+### 5.3 Why — three measurements that changed the design
+
+**(a) The pool never binds the bloom under a pool-keyed R-01, so the ceiling-excess crash cannot
+fire.** Day-by-day trace of the earlier revision's canonical run: the nutrient pool sits at 60–100
+while the bloom sits at 49–74 and *never* falls below it. The recurrence that governs the bloom is
+`r·A(1−A/N) = G·holl(A) + senescence·A` with the ceiling `N` on *both* sides, so the pool's
+equilibrium is dragged up with the bloom: the drawdown stalls because the growth it feeds stalls with
+it. Measured consequence: `max(0, algae − ceiling)` is identically zero for the entire run, and
+R-04's promised "die *en masse* when the nutrient supply collapses" never happens — when the ceiling
+fell, growth was merely clamped to zero.
+
+**(b) A density-keyed die-back sheds throughput, not stock.** Sweeping 72 legal combinations of the
+crash threshold, crash rate, decomposition and re-aeration, DO never left its re-aeration
+equilibrium: `mayfly min 20.3`, `bluegill min 34.0` in *every* row. The reason is that a plateau at
+the threshold sheds only the bloom's growth flux (≈2 index/tick), and the sediment stock therefore
+rises by ≤ 20 — far too little for `o2PerDecomp × decompRate × detritus` to outrun re-aeration.
+
+**(c) The DO trough is bounded by the detritus *flux*, not by the detritus stock** (this is the
+finding the design work ended on). In any steady state `decomposition = detritus inflow`, so the O2
+demand is `p.o2PerDecomposition × (inflow)`: the trough depth is set by how much bloom mass dies *per
+tick*, and the sediment stock only sets how long the demand lasts. With the provisional set the
+sediment peaks at 15.4 → demand 0.25 mg/L/tick versus a re-aeration relief of 0.34 at DO 5. Lowering
+the return flux (`mineralizationFraction` 0.95 → 0.30, `decompRate` 0.40 → 0.15) tripled the sediment
+pulse (15.4 → 40.5) and *still* did not produce a trough. The blocker is the nutrient loop itself:
+mineralization returns `mineralizationFraction × decompRate × detritus` to the pool, and that flux
+*grows as the crash feeds it*, so the pool stays high, the bloom stays fed, its growth stays close to
+its losses, and the shortfall die-back never ramps. **The canonical hypoxia requires the return flux
+to be small relative to the bloom's uptake in the post-loading window** — a joint condition on the
+loop parameters, not on the oxygen parameters. This is finding F-6 in SCIENCE_MODEL §9.1 and the
+starting point ER-04 inherits.
+
+### 5.4 The F-2 decision (recorded because it is a scope decision, not a tuning one)
+
+The three range-level resolutions the earlier session proposed were each measured: (a) raising
+`p.algaeGrowthRate`'s range top raised the settled bloom only 71 → 74 while breaking the healthy
+baseline band; (b) raising the nutrient index cap is inert because the pool is never the binding
+constraint; (c) restating the window removes one contradiction but leaves the rest of the chain
+unreachable. The product owner was asked and chose **(d)**: decouple the growth from the pool (R-01
+restated) and shed the growth shortfall (R-01b restated). The rule structure is frozen on that
+decision; the numbers are not yet solved.
+
+### 5.5 Independent review
+
+Packet A (science/determinism, fresh-context AI reviewer) is recorded in
+[REVIEW_ER01.md](REVIEW_ER01.md) §2 with its findings dispositioned in §3. Packet B
+(tech/UX/benchmark/process/privacy/performance) is recorded there too, with the same method.
+**Limitation, stated plainly:** both packets are AI reviewer sessions, not human scientists; the
+ER-14 requirement for human review remains open and is recorded in Jira.
