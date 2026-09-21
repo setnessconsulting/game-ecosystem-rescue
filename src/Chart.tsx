@@ -77,8 +77,16 @@ export function Chart({ trace }: { trace: TickResult[] }) {
       </svg>
 
       {/* A data table is the one thing SC 1.4.10 exempts from reflow: it needs two dimensions to
-          stay readable. So the TABLE may scroll inside its own box; the page may not. */}
-      <div className="table-scroll">
+          stay readable. So the TABLE scrolls inside its own box rather than widening the page —
+          and because it can scroll, it must be reachable and scrollable by keyboard alone
+          (axe's scrollable-region-focusable). That is why the wrapper is a focusable, labelled
+          region and not a bare div: an unreachable scroll container is a keyboard trap. */}
+      <div
+        className="table-scroll"
+        tabIndex={0}
+        role="region"
+        aria-label="Daily values behind the chart"
+      >
         <table>
           <caption>Daily values behind the chart</caption>
           <thead>

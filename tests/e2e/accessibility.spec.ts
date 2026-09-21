@@ -28,18 +28,26 @@ test("axe stays clean after advancing and taking an intervention", async ({ page
 test("every control is reachable and operable by keyboard alone", async ({ page }) => {
   await page.goto("./");
   const buttons = page.getByRole("button");
-  const count = await buttons.count();
-  expect(count).toBeGreaterThan(0);
+  const expected = await buttons.allTextContents();
+  expect(expected.length).toBeGreaterThan(0);
 
-  for (let i = 0; i < count; i++) {
-    // Tab from the top of the document until this button holds focus, then activate it with Enter.
+  // Tab through the page and collect what receives focus. The assertion is that every control is
+  // reachable — not that nothing else is focusable: a scrollable table region is focusable too,
+  // and should be (axe's scrollable-region-focusable rule).
+  const reached: string[] = [];
+  for (let i = 0; i < expected.length * 3 + 5; i++) {
     await page.keyboard.press("Tab");
-    const focused = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? "");
-    const expected = (await buttons.nth(i).textContent())?.trim() ?? "";
-    expect(focused, `tab order reached "${focused}" where "${expected}" was expected`).toBe(expected);
+    const text = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? "");
+    if (text) reached.push(text);
   }
+  for (const label of expected) {
+    expect(reached, `"${label}" was never reachable by Tab`).toContain(label);
+  }
+
+  // Operability: with a control focused, a keyboard activation must work — no pointer involved.
+  await page.getByRole("button", { name: "Divert field runoff" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByText("runoff diverted: not yet")).toBeVisible();
+  await expect(page.getByText("runoff diverted: yes")).toBeVisible();
 });
 
 test("no horizontal scrolling at 320 CSS px (WCAG 2.2 SC 1.4.10 reflow)", async ({ page }) => {
