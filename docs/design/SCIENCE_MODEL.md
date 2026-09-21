@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | **FROZEN v1.0, STRUCTURAL REVISION v1.1 (GAME-317 / ER-01)** — see banner below. Rules/structure are frozen; the v1.0 numeric parameter set is **SUPERSEDED pending recalibration** (§9 banner). |
+| Status | **FROZEN v1.0, STRUCTURAL REVISION v1.1 (GAME-317 / ER-01)** — see banner below. Rules/structure are frozen; the v1.0 numeric parameter set is **SUPERSEDED**. A recalibrated candidate set (`pc1-params-1.1`) with an executable verification harness now exists (§9.1), but it does **not yet reproduce every §11 window** — see §9.1 for the measured gap and the range revision it requires. |
 | Model class | Pedagogical causal model — **not** a research-grade ecology simulator |
 | Rule IDs | `R-*` (stable identifiers; ER-03 code and golden traces must reference these IDs) |
 | Model version identity | `SIM_MODEL_VERSION = "pond-crisis-1.0"`, `PARAM_SET_VERSION = "pc1-params-1.0"` (emitted in every replay trace) |
@@ -212,6 +212,27 @@ All values are model units. Ranges are the legal ER-04 tuning space; changing a 
 | p.noisePct | 0.02 | 0–0.05 | R-50 | Reproduction/colonization noise only |
 | p.stressMortality | 0.10 /tick | 0.05–0.20 | R-40 | Max per-tick mortality at DO=0 |
 | DO stress thresholds (mg/L) | mayfly 5.5, dragonfly 4.0, water flea 4.0, bluegill 3.0, snail 2.0 | ±0.5 | R-40 | Anchored to S4/S7/S8 bands |
+
+### 9.1 Calibration outcome — candidate `pc1-params-1.1` (2026-09-21, GAME-317 / ER-01)
+
+An executable harness (`evidence/calibration-sim.mjs`, zero-dependency Node, run
+`node docs/design/evidence/calibration-sim.mjs`) implements every rule above and tests it against
+the §11 commitments and the §5 matter-loop identity. Its current status and the verified facts are
+recorded in [EVIDENCE.md](EVIDENCE.md); the headline findings are:
+
+| # | Finding | Consequence |
+| --- | --- | --- |
+| F-1 | The v1.0 numeric ranges are **flux-infeasible**: a consumer whose maintenance/egestion is levied on body mass (or whose production is a small share of intake) cannot be supported by the algal production available at any baseline where the consumers sit in the upper abundance bands. | `p.maintenance` is defined on the **assimilated intake** (R-12 restated mass-budget form); `p.reproduction` is **removed** as a separate parameter (production falls out of the mass budget). |
+| F-2 | The bloom's unconstrained equilibrium under the declared ranges is **≈70–73 index** — below the §11 window "algae ≥ 75". It is set by `r·A(1−A/C) = G·holl(A) + senescence·A` with `r ≤ 0.30`, `C ≤ 92` (the ceiling is the instantaneous nutrient pool, capped at 100), and `G` at or above the minimum that keeps three grazer species alive (F-3). | The ≥75 window is **not reachable** inside the declared ranges. ER-04 must either raise the `p.algaeGrowthRate` ceiling above 0.30, raise the nutrient index's internal cap above 100 (it is simultaneously the pool cap and the bloom ceiling), or restate the window (e.g. "the bloom rises above ~70 and at least doubles the baseline index"). |
+| F-3 | A single shared Holling half-saturation cannot both keep grazing near saturation at bloom density (needed for F-2) and stop predators from over-taking sparse prey (which drives a grazer extinct). | Add `p.predationHalfSaturation` (distinct from the grazing `p.halfSaturation`). |
+| F-4 | A **ceiling-excess** bloom-crash term provably never fires (a bloom in this rule set tracks its instantaneous ceiling and never overshoots it); only a **density-excess** term crashes a bloom. | R-01b is frozen as density-excess; the ceiling reading is recorded as non-firing. |
+| F-5 | The canonical pulse saturates the nutrient index at its 100 cap, and the end-of-tick clamp then **destroys matter** (the §5 loop identity fails, worst residual ≈ 2.9/tick). | ER-03 must define cap behaviour: spill/reject the inflow at the cap rather than clamp the stock. Scenario magnitude must also be shaped so the pool does not pin at the cap. |
+
+**Candidate values** (harness-verified facts in parentheses): `p.algaeGrowthRate 0.30` · `p.algaeSenescence 0.012` · `p.bloomCrashThreshold 70` (F-4) · `p.bloomCrashRate 1.00` · `p.shadingCoefficient 0.95` · `p.weedGrowthRate 0.12` · `p.weedSenescence 0.020` · `p.weedK 85` · `p.halfSaturation 5` · `p.predationHalfSaturation 40` (F-3) · `p.removalRate {flea 0.030, mayfly 0.030, snail 0.030, bluegill 0.013, dragonfly 0.013}` · `p.egestionFraction 0.02` · `p.maintenance 0.03` · `p.backgroundMortality 0.010` · `p.decompRate 0.38` · `p.mineralizationFraction 0.90` · `p.o2PerDecomp 0.040` · `p.reAeration 0.12` · `p.o2RespirationBasal 0.05` · `p.nutrientSinkRate 0.05` · `p.nutrientReference 50` · `p.backgroundInflow 0.627` · `p.exportFraction 0.15` · `p.stressMortality 0.15` · `p.noisePct 0.02` · `p.carryingCapacity {flea 140, mayfly 120, snail 128, bluegill 100, dragonfly 50}`. Canonical scenario: runoff 9 index units/tick for days 0–10; the undisturbed fixed point the candidate produces (anchored at nutrients = 50) is `{nutrients 50, algae 38.2, weeds 65.0, flea 36.6, mayfly 20.2, snail 27.8, bluegill 33.9, dragonfly 16.9, sediment 19.0, DO 7.60}` — every stock inside its healthy band and stationary over 60 ticks (verified).
+
+**Range revisions required by the findings above** (declared, not silent): `p.halfSaturation` 3–40 (was 15–40); `p.algaeSenescence` 0.008–0.08 (was 0.02–0.08); `p.maintenance` 0.02–0.20 redefined on assimilated intake; `p.egestionFraction` 0–0.40 and `p.exportFraction` 0.05–0.50 (new); `p.backgroundMortality` 0.004–0.04 (was 0.01–0.05); `p.removalRate.*` 0.004–0.30 (replaces `p.maxIntake`, which the v1.1 R-10 restatement supersedes); `p.predationHalfSaturation` 8–80 (new); `p.bloomCrashThreshold` 45–80 and `p.bloomCrashRate` 0.05–2.0 (new, R-01b).
+
+**Handoff.** The exact numeric demonstration of the §11 windows is an **ER-04** deliverable (this section's own rule): ER-04 starts from this candidate set and the harness, resolves F-2 by the range decision above, and must show the harness passing before ER-03's kernel is calibrated against it. The harness is the acceptance test.
 
 **Calibration commitments (ER-04 must demonstrate via golden traces):**
 1. Baseline pond (no disruption) holds all stocks within ±10 of initial values for 60 ticks (no drift-collapse).

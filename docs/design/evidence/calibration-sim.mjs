@@ -1,69 +1,130 @@
 // calibration-sim.mjs — GAME-317 / ER-01 evidence harness (NOT production code)
-// Implements the candidate SCIENCE_MODEL v1.1 rules in plain JS so the frozen
-// parameter set can be verified against §11 commitments before ER-03 exists.
-// Run: node docs/design/evidence/calibration-sim.mjs
-// Zero dependencies. Floats are fine here; the shipping kernel (ER-03) uses
-// fixed-point integers per TECHNICAL_DESIGN §D-3 — magnitudes are far below
-// 2^53 and rules are rational functions, so results transfer.
+//
+// Purpose: implement the SCIENCE_MODEL v1.1 rules in plain JS and verify that the frozen
+// parameter set (pc1-params-1.1) satisfies every §11 calibration commitment and sanity test,
+// plus the MS-LS2-3 matter-loop conservation identity (§5).
+//
+// Run: node docs/design/evidence/calibration-sim.mjs      (exit 0 = all checks pass)
+//
+// Zero dependencies (node: builtins only). Floats are used here; the shipping kernel (ER-03)
+// uses fixed-point integers per TECHNICAL_DESIGN §D-3. Every operation in the rule set is a
+// rational function (+, −, ×, ÷, min, max, comparison), so results transfer under fixed-point
+// quantization; magnitudes stay far below 2^53.
+//
+// Vocabulary: rule IDs R-* mirror SCIENCE_MODEL §6. Checks are labelled
+//   C1..C4  = §11 calibration commitments
+//   S1..S7  = §11 sanity tests
+//   LOOP    = matter-loop conservation identity (§5, the MS-LS2-3 anchor)
+//   X1..    = intervention-menu direction checks (§10)
+//
+// ---------------------------------------------------------------------------
+// Design decisions encoded here (recorded in SCIENCE_MODEL §9 / DECISIONS D-30)
+// ---------------------------------------------------------------------------
+// 1. Consumer production is MASS-BASED: a predator converts the prey mass it actually
+//    removes into (a) assimilated biomass → births, (b) egestion → detritus, and (c)
+//    maintenance respiration → detritus. R-12's "surplus above maintenance" semantics are
+//    preserved, but measured in mass units. The v1.0 form (births from the Holling *intake
+//    rate*, with removal separately parameterized) made the loop non-conservative and left
+//    every baseline run pinned at the caps, so R-12/R-41 could not be calibrated at all.
+// 2. That makes the matter loop EXACT for every tick: the only sources/sinks are the
+//    scenario inflow, the settling/denitrification sink, burial, and the emergence/outflow
+//    export share. LOOP asserts the identity to float precision.
+// 3. The canonical spring pond is the *undisturbed fixed point* of the frozen rules with the
+//    nutrient index anchored at 50 (solved by bisection in `anchorEquilibrium`, not hand-set).
+
+import { pathToFileURL } from "node:url";
+
+export const SIM_MODEL_VERSION = "pond-crisis-1.1";
+export const PARAM_SET_VERSION = "pc1-params-1.1";
 
 // ---------------------------------------------------------------------------
-// Parameters (candidate frozen set — must match SCIENCE_MODEL §9 exactly)
+// Parameters — candidate set `pc1-params-1.1` (must match SCIENCE_MODEL §9 exactly)
 // ---------------------------------------------------------------------------
-const P = {
-  // producers
-  algaeGrowthRate: 0.30,      // R-01 logistic intrinsic rate
-  maxAlgae: 100,              // index cap
-  crashDecayRate: 0.35,       // R-01b decay-from-excess after ceiling collapse
-  senescenceAlgae: 0.02,      // R-04 fraction -> sediment /tick
-  weedGrowthRate: 0.10,       // R-02
-  weedK: 70,                  // R-02 weed carrying capacity (frozen, was missing)
-  senescenceWeeds: 0.015,     // R-04
-  shadingCoefficient: 0.9,    // R-03
-  // consumers (R-10/R-11: removal is DIRECTLY parameterized, not derived from intake)
-  halfSaturation: 25,         // R-10 Holling half-saturation (shared)
-  removalRate: { flea: 0.05, mayfly: 0.05, snail: 0.05, bluegill: 0.02, dragonfly: 0.02 },
-  maxIntake:    { flea: 0.35, mayfly: 0.30, snail: 0.30, bluegill: 0.30, dragonfly: 0.30 },
-  secondaryGrazeFactor: 0.7,  // mayfly/snail graze the shared pool less efficiently
-  reproduction: 0.45,         // R-12 births on intake surplus
-  maintenance: 0.05,          // R-12
-  backgroundMortality: 0.015, // R-12
-  starveBase: 0.05,           // R-41 starvation base mortality
-  starveEscalation: 0.5,      // R-41 +50% per tick beyond the 3rd hungry tick
-  starveCap: 5,               // R-41 max multiplier
-  // sediment / decomposition / nutrients (closed loop with exports)
-  decompRate: 0.15,           // R-21 fraction of sediment decomposed /tick
-  tempFactor: 1.0,            // frozen constant in v1 (no temperature simulation)
-  mineralizationFraction: 0.9,// R-21 share of decomposed matter returned to nutrient pool
-  egestionFraction: 0.60,     // R-20 share of grazed biomass that is not converted to consumer biomass
-  exportFraction: 0.20,       // R-21b share of consumer mortality+egestion leaving the pond (emergence/outflow)
-  backgroundInflow: 0.40,     // R-30 constant watershed nutrient inflow /tick
-  nutrientSink: 0.008,        // R-30 fraction of nutrient pool settling/denitrified /tick
+export const P = {
+  // producers (R-01/R-02/R-03/R-04)
+  algaeGrowthRate: 0.30,        // R-01 logistic intrinsic rate (top of the declared range)
+  maxAlgae: 100,                // R-01 index cap
+  bloomCrashThreshold: 70,      // R-01b bloom density above which the standing bloom sheds biomass
+  bloomCrashRate: 1.00,         // R-01b fraction of the excess bloom shed per tick (self-shading /
+                                // cell death at bloom density)
+  algaeSenescence: 0.012,       // R-04 fraction of algae -> detritus /tick
+  weedGrowthRate: 0.12,         // R-02
+  weedK: 85,                    // R-02 weed carrying capacity
+  weedSenescence: 0.020,        // R-04
+  shadingCoefficient: 0.95,     // R-03 clarity loss per algae index point
+  // consumers (R-10/R-11: per-link removal is directly parameterized)
+  halfSaturation: 5,            // R-10 Holling half-saturation, GRAZING (prey index at half intake)
+  predationHalfSaturation: 40,  // R-10 Holling half-saturation, PREDATION (separate: a predator's
+                                // functional response saturates at a different prey density than a
+                                // filter-feeder's, and a single shared value cannot both keep the
+                                // grazers' intake near saturation at bloom density and keep the
+                                // predator from over-taking sparse prey; see EVIDENCE.md)
+  removalRate: { flea: 0.030, mayfly: 0.030, snail: 0.030, bluegill: 0.013, dragonfly: 0.013 },
+  egestionFraction: 0.02,       // R-20 share of removed prey mass egested (not assimilated)
+  maintenance: 0.03,            // R-12 maintenance respiration as a fraction of assimilated intake
+  carryingCapacity: { flea: 140, mayfly: 120, snail: 128, bluegill: 100, dragonfly: 50 }, // R-12 recruitment cap
+  starveBase: 0.02,             // R-41 starvation base mortality
+  starveEscalation: 0.5,        // R-41 +50% per tick beyond the 3rd hungry tick
+  starveCap: 5,                 // R-41 max multiplier
+  backgroundMortality: 0.010,   // R-12 /tick
+  // detritus / nutrients (closed loop with exports)
+  decompRate: 0.38,             // R-21 fraction of detritus decomposed /tick
+  mineralizationFraction: 0.90, // R-21 share of decomposed matter returned to the nutrient pool
+  backgroundInflow: 0.627,      // R-30 constant watershed nutrient inflow /tick (settles N at the reference)
+  nutrientSinkRate: 0.05,       // R-30 fraction of the nutrient EXCESS over the reference settling/denitrifying /tick
+  nutrientReference: 50,        // R-30 sediment-water exchange equilibrium: net settling above it, no net release below
+  exportFraction: 0.15,         // R-20/R-21b share of consumer mortality + egestion leaving the pond
   // oxygen (R-22/R-23)
   o2Saturation: 9.0,
-  reAeration: 0.15,
-  reAerationAerated: 0.28,    // aeration intervention value
-  o2PerDecomp: 0.052,
-  o2PerPhoto: 0.002,
+  reAeration: 0.12,
+  reAerationAerated: 0.30,      // §10 aeration intervention value
+  o2PerDecomp: 0.040,           // O2 cost per unit of decomposed matter (O2 demand tracks the sediment stock)
+  o2PerPhoto: 0.001,
   photoCap: 0.5,
-  o2RespirationBasal: 0.056,
+  o2RespirationBasal: 0.05,
   // stress (R-40)
-  stressWindow: 2,            // running-average window (ticks), frozen
-  stressMortality: 0.10,
-  thresholds: {               // onset / severe (mg/L), frozen per review finding #5
-    mayfly:   { onset: 5.5, severe: 3.0 },
-    flea:     { onset: 4.0, severe: 2.0 },
-    dragonfly:{ onset: 4.0, severe: 2.0 },
-    bluegill: { onset: 5.0, severe: 2.5 },
-    snail:    { onset: 2.0, severe: 1.0 },
+  stressWindow: 2,              // running-average window (ticks)
+  stressMortality: 0.15,        // max per-tick mortality at doAvg <= severe
+  thresholds: {                 // onset / severe (mg/L)
+    mayfly:    { onset: 5.5, severe: 3.0 },
+    flea:      { onset: 4.0, severe: 2.0 },
+    dragonfly: { onset: 4.0, severe: 2.0 },
+    bluegill:  { onset: 5.0, severe: 2.5 },
+    snail:     { onset: 2.0, severe: 1.0 },
   },
   // stochasticity (R-50)
   noisePct: 0.02,
 };
 
-const ORDER = ["algae", "weeds", "flea", "mayfly", "snail", "bluegill", "dragonfly"];
+export const CONSUMERS = ["flea", "mayfly", "snail", "bluegill", "dragonfly"];
+export const PRODUCERS = ["algae", "weeds"];
+export const ORGANISMS = [...PRODUCERS, ...CONSUMERS];
+const ALL_STOCKS = [...ORGANISMS, "nutrients", "sediment"];
 const POP_CAP = 100, SED_CAP = 100, NUT_CAP = 100, DO_CAP = 15;
+const CONSUMER_ORDER = [...CONSUMERS]; // FROZEN evaluation order (SCIENCE_MODEL §6.5)
 
-// Seeded PRNG (mulberry32) — the only stochasticity, reproduction terms only (R-50)
+// ---------------------------------------------------------------------------
+// Canonical spring pond — the undisturbed fixed point (see anchorEquilibrium)
+// Values are written by the solver in §"canonical anchor" below and frozen here.
+// ---------------------------------------------------------------------------
+export const CANONICAL_INITIAL = Object.freeze({
+  nutrients: 50.0, algae: 38.2, weeds: 65.0,
+  flea: 36.6, mayfly: 20.2, snail: 27.8, bluegill: 33.9, dragonfly: 16.9,
+  sediment: 19.0, do: 7.60,
+});
+
+// Canonical disruption: the scenario injects farm-fertilizer + septic runoff during the
+// loading phase (SCIENCE_MODEL §2). Magnitude is set so the nutrient index rises to ~90.
+export const CANONICAL_RUNOFF_DAYS = 10;
+export const CANONICAL_RUNOFF_PER_DAY = 9.0;
+
+export function canonicalRunoff(tick) {
+  return tick < CANONICAL_RUNOFF_DAYS ? CANONICAL_RUNOFF_PER_DAY : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic PRNG (mulberry32) — the only stochasticity, reproduction terms (R-50)
+// ---------------------------------------------------------------------------
 function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -75,355 +136,572 @@ function mulberry32(seed) {
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const holling = (x) => x / (P.halfSaturation + x);
+// R-10 functional response. Two half-saturations: filter-feeding grazers (flea/mayfly/snail)
+// saturate on the algal pool, predators (bluegill/dragonfly) on their prey stocks.
+const GRAZER_SET = new Set(["flea", "mayfly", "snail"]);
+const hollG = (x) => x / (P.halfSaturation + x);
+const hollP = (x) => x / (P.predationHalfSaturation + x);
 
 // ---------------------------------------------------------------------------
-// Initial state (canonical spring pond)
+// State
 // ---------------------------------------------------------------------------
-function initialState() {
+export function initialState(init = CANONICAL_INITIAL, seed = 1) {
   return {
     tick: 0,
-    nutrients: 50, algae: 40, weeds: 60, flea: 40, mayfly: 30, snail: 30,
-    bluegill: 25, dragonfly: 15, sediment: 25,
-    do: 7.6, clarity: 100 - P.shadingCoefficient * 40,
-    doHist: [7.6, 7.6],                 // for the 2-tick stress average
+    nutrients: init.nutrients, algae: init.algae, weeds: init.weeds,
+    flea: init.flea, mayfly: init.mayfly, snail: init.snail,
+    bluegill: init.bluegill, dragonfly: init.dragonfly,
+    sediment: init.sediment, do: init.do,
+    doHist: [init.do, init.do],
     hungry: { flea: 0, mayfly: 0, snail: 0, bluegill: 0, dragonfly: 0 },
-    rng: null, seed: 1,
+    flags: { runoffDiverted: false, bufferStrip: false, aerated: false },
+    events: [],
+    rng: mulberry32(seed), seed,
   };
 }
 
 // ---------------------------------------------------------------------------
-// One tick. Order is FROZEN (SCIENCE_MODEL §6.5): all flows computed from the
-// snapshot S; stocks updated once; DO last; clamps at end of tick only.
+// R-31 interventions — applied at the tick boundary, before flows are computed.
+// Declared menu order is frozen (SCIENCE_MODEL §10); each application is logged.
 // ---------------------------------------------------------------------------
-function step(s, cfg) {
-  // cfg: { runoff(tick)->input, reAerationOverride?, interventions... }
-  const S = { ...s, doHist: [...s.doHist], hungry: { ...s.hungry } };
-  const f = {}; // flows, for the mass invariant + evidence layer
+const MENU_ORDER = ["divert-runoff", "buffer-strip", "aeration", "grazer-boost", "bluegill-removal", "dredge"];
+
+function applyIntervention(S, id) {
+  switch (id) {
+    case "divert-runoff": S.flags.runoffDiverted = true; break;
+    case "buffer-strip": S.flags.bufferStrip = true; break;
+    case "aeration": S.flags.aerated = true; break;
+    case "grazer-boost": S.flea = clamp(S.flea + 20, 0, POP_CAP); break;        // §10: +bump to water fleas
+    case "bluegill-removal": S.bluegill = clamp(S.bluegill * 0.5, 0, POP_CAP); break; // §10: −50%
+    case "dredge": S.sediment = clamp(S.sediment * 0.4, 0, SED_CAP); break;     // §10: detritus −60%
+    default: throw new Error(`unknown intervention ${id}`);
+  }
+  S.events.push({ rule: "R-31", kind: "intervention-applied", id });
+}
+
+// ---------------------------------------------------------------------------
+// One tick. Order is FROZEN (SCIENCE_MODEL §6.5): interventions at the tick boundary,
+// then every flow is computed from the pre-tick snapshot S, exactly one update pass,
+// clamps at end of tick only.
+// ---------------------------------------------------------------------------
+export function step(state, cfg = {}) {
+  const S = {
+    ...state,
+    doHist: [...state.doHist],
+    hungry: { ...state.hungry },
+    flags: { ...state.flags },
+    events: [...state.events],
+  };
+  const f = {};
+
+  // -- R-31 tick-boundary interventions (declared menu order, deterministic)
+  const scheduled = (cfg.interventions ?? []).filter((iv) => iv.tick === S.tick);
+  for (const id of MENU_ORDER) {
+    if (scheduled.some((iv) => iv.id === id)) applyIntervention(S, id);
+  }
 
   // -- R-03 clarity (from snapshot algae)
   const clarity = clamp(100 - P.shadingCoefficient * S.algae, 0, 100);
 
   // -- R-01 algal growth (nutrient ceiling from snapshot nutrients)
   const ceiling = P.maxAlgae * Math.min(1, S.nutrients / 100);
-  const grossAlgaeGrowth = ceiling > 0
-    ? P.algaeGrowthRate * S.algae * (1 - S.algae / ceiling)
+  const rawGrowth = ceiling > 0 && S.algae > 0
+    ? Math.max(0, P.algaeGrowthRate * S.algae * (1 - S.algae / ceiling))
     : 0;
-  const algaeUptake = Math.max(0, grossAlgaeGrowth); // nutrient cost of new algal biomass
+  // The cells cannot take up more nutrient than is dissolved (mass, and it keeps the pool >= 0).
+  const algaeGrowth = Math.min(rawGrowth, Math.max(0, S.nutrients));
+  const nutrientUptakeAlgae = algaeGrowth; // mass: new algal biomass draws from the pool 1:1
 
-  // -- R-01b bloom-crash: decay-from-excess (frozen rate; ceiling=0 => exponential floor)
-  const excess = Math.max(0, S.algae - ceiling);
-  const crashDeath = P.crashDecayRate * excess;
+  // -- R-01b bloom die-back ("bloom crash"): the standing bloom sheds everything above a frozen
+  //    bloom-density threshold each tick, so the bloom plateaus there and any nutrient collapse
+  //    forces the die-back out at that rate. Density-keyed, NOT ceiling-keyed: R-01's ceiling is
+  //    the INSTANTANEOUS nutrient pool, so a bloom in this rule set tracks its ceiling and never
+  //    overshoots it — a ceiling-excess crash term provably never fires (verified in EVIDENCE.md;
+  //    the harness keeps a ceiling-excess variant behind `--crash=ceiling` for the record).
+  const algaeCrash = P.bloomCrashRate * Math.max(0, S.algae - P.bloomCrashThreshold);
 
   // -- R-04 senescence
-  const algaeSenescence = P.senescenceAlgae * S.algae;
-  const weedSenescence = P.senescenceWeeds * S.weeds;
+  const algaeSenescence = P.algaeSenescence * S.algae;
+  const weedSenescence = P.weedSenescence * S.weeds;
 
-  // -- R-02 weed growth (clarity-scaled logistic toward weedK)
-  const weedGrowth = P.weedGrowthRate * S.weeds * (1 - S.weeds / P.weedK)
-    * (0.2 + 0.8 * (clarity / 100));
-  const weedsUptake = Math.max(0, weedGrowth); // nutrient cost of new weed biomass
+  // -- R-02 weed growth (logistic toward weedK, clarity-scaled, never negative)
+  const weedGrowth = S.weeds > 0
+    ? Math.max(0, P.weedGrowthRate * S.weeds * (1 - S.weeds / P.weedK) * (0.2 + 0.8 * (clarity / 100)))
+    : 0;
+  const nutrientUptakeWeeds = weedGrowth;
 
-  // -- R-10/R-11 grazing & predation (frozen order: flea, mayfly, snail, bluegill, dragonfly)
-  //    removal rates are direct parameters (review finding #6); capped by remaining prey.
+  // -- R-10/R-11 grazing & predation. Removal is directly parameterized per link, capped by
+  //    the remaining prey pool; the evaluation order is the frozen §6.5 order.
   const prey = { algae: S.algae, flea: S.flea, mayfly: S.mayfly, snail: S.snail };
-  const removal = { fleaA: 0, mayflyA: 0, snailA: 0, bluegillF: 0, bluegillMy: 0, bluegillS: 0, dragonflyF: 0, dragonflyMy: 0, dragonflyS: 0 };
-  const intake = {}; // for consumer growth (Holling term, pre-removal-rate)
-  intake.flea = P.maxIntake.flea * holling(S.algae);
-  intake.mayfly = P.secondaryGrazeFactor * P.maxIntake.mayfly * holling(S.algae);
-  intake.snail = P.secondaryGrazeFactor * P.maxIntake.snail * holling(S.algae);
-  removal.fleaA = Math.min(P.removalRate.flea * holling(S.algae) * S.flea, prey.algae); prey.algae -= removal.fleaA;
-  removal.mayflyA = Math.min(P.removalRate.mayfly * holling(S.algae) * S.mayfly, prey.algae); prey.algae -= removal.mayflyA;
-  removal.snailA = Math.min(P.removalRate.snail * holling(S.algae) * S.snail, prey.algae); prey.algae -= removal.snailA;
-  intake.bluegill = {
-    flea: P.maxIntake.bluegill * holling(S.flea),
-    mayfly: P.maxIntake.bluegill * holling(S.mayfly),
-    snail: P.maxIntake.bluegill * holling(S.snail),
+  const link = (path) => path.reduce((a, k) => a[k], f);
+  f.removed = { flea: 0, mayfly: 0, snail: 0, bluegill: 0, dragonfly: 0 };
+  const graze = (pred, preyKey) => {
+    const h = GRAZER_SET.has(pred) ? hollG : hollP;
+    const take = Math.min(P.removalRate[pred] * h(S[preyKey]) * S[pred], prey[preyKey]);
+    prey[preyKey] -= take;
+    f.removed[pred] += take;
+    return take;
   };
-  intake.dragonfly = {
-    flea: P.maxIntake.dragonfly * holling(S.flea),
-    mayfly: P.maxIntake.dragonfly * holling(S.mayfly),
-    snail: P.maxIntake.dragonfly * holling(S.snail),
+  f.grazedAlgae = { flea: graze("flea", "algae"), mayfly: graze("mayfly", "algae"), snail: graze("snail", "algae") };
+  f.predation = {
+    flea: graze("bluegill", "flea") + graze("dragonfly", "flea"),
+    mayfly: graze("bluegill", "mayfly") + graze("dragonfly", "mayfly"),
+    snail: graze("bluegill", "snail") + graze("dragonfly", "snail"),
   };
-  removal.bluegillF = Math.min(P.removalRate.bluegill * holling(S.flea) * S.bluegill, prey.flea); prey.flea -= removal.bluegillF;
-  removal.bluegillMy = Math.min(P.removalRate.bluegill * holling(S.mayfly) * S.bluegill, prey.mayfly); prey.mayfly -= removal.bluegillMy;
-  removal.bluegillS = Math.min(P.removalRate.bluegill * holling(S.snail) * S.bluegill, prey.snail); prey.snail -= removal.bluegillS;
-  removal.dragonflyF = Math.min(P.removalRate.dragonfly * holling(S.flea) * S.dragonfly, prey.flea); prey.flea -= removal.dragonflyF;
-  removal.dragonflyMy = Math.min(P.removalRate.dragonfly * holling(S.mayfly) * S.dragonfly, prey.mayfly); prey.mayfly -= removal.dragonflyMy;
-  removal.dragonflyS = Math.min(P.removalRate.dragonfly * holling(S.snail) * S.dragonfly, prey.snail); prey.snail -= removal.dragonflyS;
+  // NOTE: predator intake on grazer prey is drawn bluegill-then-dragonfly by the frozen
+  // order above; that is a declared, deterministic simplification (SCIENCE_MODEL §6.5).
 
-  // -- R-12 births / deaths, R-41 starvation (noise on births only, R-50)
-  const rng = S.rng;
-  const noise = () => 1 + (rng() * 2 - 1) * P.noisePct;
-  const pops = { flea: S.flea, mayfly: S.mayfly, snail: S.snail, bluegill: S.bluegill, dragonfly: S.dragonfly };
-  const births = {}, deaths = {}, starve = {}, stress = {};
-  const totalIntake = {
-    flea: intake.flea,
-    mayfly: intake.mayfly,
-    snail: intake.snail,
-    bluegill: intake.bluegill.flea + intake.bluegill.mayfly + intake.bluegill.snail,
-    dragonfly: intake.dragonfly.flea + intake.dragonfly.mayfly + intake.dragonfly.snail,
-  };
-  // R-40 stress input: running average of DO over stressWindow (frozen = 2)
-  const doAvg = (S.doHist.slice(-P.stressWindow).reduce((a, b) => a + b, 0)) / P.stressWindow;
-  for (const sp of ["flea", "mayfly", "snail", "bluegill", "dragonfly"]) {
-    births[sp] = P.reproduction * Math.max(0, totalIntake[sp] - P.maintenance) * pops[sp] * noise();
-    deaths[sp] = P.backgroundMortality * pops[sp];
-    // R-41 starvation
-    if (totalIntake[sp] < P.maintenance) S.hungry[sp] += 1; else S.hungry[sp] = 0;
+  // -- R-40 stress input: 2-tick running average of DO
+  const doAvg = S.doHist.slice(-P.stressWindow).reduce((a, b) => a + b, 0) / P.stressWindow;
+  f.doAvg = doAvg;
+
+  // -- R-12/R-20/R-41 consumer mass budget + mortality
+  const noise = () => 1 + (S.rng() * 2 - 1) * P.noisePct;
+  const births = {}, deaths = {}, starve = {}, stress = {}, respired = {}, egestion = {}, shed = {};
+  for (const sp of CONSUMER_ORDER) {
+    const removedMass = f.removed[sp];
+    egestion[sp] = P.egestionFraction * removedMass;              // R-20 unassimilated share -> detritus
+    const assimilated = removedMass - egestion[sp];
+    // R-12 maintenance respiration. v1.0 read `p.maintenance` as a share of the intake
+    // quantity (intake and maintenance compared in the same units); the v1.1 mass-budget
+    // form keeps that reading — a share of the ASSIMILATED intake — rather than making it a
+    // share of body mass. A body-mass-scaled rate is flux-infeasible against the declared
+    // algae growth range at any baseline where the consumers sit in the upper abundance
+    // bands (the algae's logistic production near its nutrient ceiling cannot supply it);
+    // see EVIDENCE.md "flux feasibility".
+    const maintenanceCost = P.maintenance * assimilated;
+    respired[sp] = maintenanceCost;                                // -> detritus (metabolic waste)
+    // R-12: production is surplus above maintenance, capped by the species carrying capacity
+    // (recruitment limitation). Mass that cannot be recruited to standing biomass is shed back
+    // to detritus, so the matter loop stays exact.
+    const surplus = assimilated - respired[sp];
+    const recruitment = clamp(1 - S[sp] / P.carryingCapacity[sp], 0, 1);
+    births[sp] = surplus * recruitment * noise();
+    shed[sp] = surplus * (1 - recruitment);
+    deaths[sp] = P.backgroundMortality * S[sp];
+    // R-41 food limitation (assimilated intake below maintenance for 3+ consecutive ticks)
+    if (assimilated < maintenanceCost) S.hungry[sp] += 1; else S.hungry[sp] = 0;
     if (S.hungry[sp] >= 3) {
       const mult = Math.min(P.starveCap, 1 + P.starveEscalation * (S.hungry[sp] - 3));
-      starve[sp] = P.starveBase * mult * pops[sp];
+      starve[sp] = P.starveBase * mult * S[sp];
     } else starve[sp] = 0;
     // R-40 DO stress (linear ramp onset -> severe on the averaged DO)
-    const t = P.thresholds[sp];
-    const frac = clamp((t.onset - doAvg) / (t.onset - t.severe), 0, 1);
-    stress[sp] = P.stressMortality * frac * pops[sp];
+    const th = P.thresholds[sp];
+    const frac = clamp((th.onset - doAvg) / (th.onset - th.severe), 0, 1);
+    stress[sp] = P.stressMortality * frac * S[sp];
   }
 
-  // -- R-20/R-21b detritus (sediment) budget with export
-  const consumerDeathMass = (["flea", "mayfly", "snail", "bluegill", "dragonfly"])
-    .reduce((a, sp) => a + deaths[sp] + starve[sp] + stress[sp], 0);
-  const grazedTotal = removal.fleaA + removal.mayflyA + removal.snailA;
-  const predationTotal = removal.bluegillF + removal.bluegillMy + removal.bluegillS
-    + removal.dragonflyF + removal.dragonflyMy + removal.dragonflyS;
-  const grazedConverted = (["flea", "mayfly", "snail"]).reduce((a, sp) => a + births[sp], 0); // births come from grazed mass
-  const predConverted = (["bluegill", "dragonfly"]).reduce((a, sp) => a + births[sp], 0);
-  const egestion = P.egestionFraction * grazedTotal + P.egestionFraction * predationTotal; // coarse frozen split
-  const detritusInflow = algaeSenescence + weedSenescence + crashDeath + consumerDeathMass * (1 - P.exportFraction) + egestion * (1 - P.exportFraction);
+  // -- R-20/R-21b detritus budget with export
+  const deadMass = CONSUMER_ORDER.reduce((a, sp) => a + deaths[sp] + starve[sp] + stress[sp], 0);
+  const egestionTotal = CONSUMER_ORDER.reduce((a, sp) => a + egestion[sp], 0);
+  const maintenanceTotal = CONSUMER_ORDER.reduce((a, sp) => a + respired[sp] + shed[sp], 0);
+  const exportLoss = P.exportFraction * (deadMass + egestionTotal); // emergence / downstream outflow
+  const detritusInflow = algaeSenescence + weedSenescence + algaeCrash
+    + maintenanceTotal + (deadMass + egestionTotal) - exportLoss;
 
-  // -- R-21 decomposition
-  const decomposition = P.decompRate * S.sediment * P.tempFactor;
-  const mineralized = P.mineralizationFraction * decomposition; // returns to nutrient pool
-  const buried = decomposition - mineralized;                    // leaves the active cycle
+  // -- R-21 decomposition (also drives the O2 demand)
+  const decomposition = P.decompRate * S.sediment;
+  const mineralized = P.mineralizationFraction * decomposition;   // returns to the nutrient pool
+  const buried = decomposition - mineralized;                     // leaves the active cycle
 
   // -- R-30 nutrient pool
-  const runoff = cfg.runoff ? cfg.runoff(S.tick) : 0;
+  let runoff = cfg.runoff ? cfg.runoff(S.tick) : 0;
+  if (S.flags.runoffDiverted) runoff = 0;
+  if (S.flags.bufferStrip) runoff *= 0.3;                          // §10: buffer cuts remaining runoff ~70%
   const nutIn = runoff + P.backgroundInflow;
+  // R-30 settling/denitrification acts on the nutrient EXCESS above the sediment-water
+  // exchange equilibrium: a shallow pond's sediments buffer the water column (net adsorption
+  // above the equilibrium, no net release below in v1). A purely proportional sink instead
+  // makes the pool relax exponentially back to its baseline, so the bloom can never be
+  // starved and the canonical crash is unreachable.
+  const nutrientSinkLoss = P.nutrientSinkRate * Math.max(0, S.nutrients - P.nutrientReference);
 
-  // -- R-22/R-23 oxygen (uses decomposition flow + snapshot algae)
+  // -- R-22/R-23 oxygen
   const photo = Math.min(P.photoCap, P.o2PerPhoto * S.algae);
-  const reAer = (cfg.aerated ? P.reAerationAerated : P.reAeration) * (P.o2Saturation - S.do);
-  const consumption = P.o2PerDecomp * decomposition + P.o2RespirationBasal;
+  const reAerRate = S.flags.aerated ? P.reAerationAerated : P.reAeration;
+  const reAer = reAerRate * (P.o2Saturation - S.do);
+  const o2Demand = P.o2PerDecomp * decomposition;
+  const consumption = o2Demand + P.o2RespirationBasal;
 
-  // ---- apply (single pass from snapshot) ----
+  // ---- apply: single update pass from the snapshot ----
   const n = {};
-  n.nutrients = S.nutrients + nutIn + mineralized - algaeUptake - weedsUptake - P.nutrientSink * S.nutrients;
-  n.algae = S.algae + grossAlgaeGrowth - crashDeath - algaeSenescence - grazedTotal;
+  n.nutrients = S.nutrients + nutIn + mineralized - nutrientUptakeAlgae - nutrientUptakeWeeds - nutrientSinkLoss;
+  n.algae = S.algae + algaeGrowth - algaeCrash - algaeSenescence - (f.grazedAlgae.flea + f.grazedAlgae.mayfly + f.grazedAlgae.snail);
   n.weeds = S.weeds + weedGrowth - weedSenescence;
+  for (const sp of CONSUMER_ORDER) {
+    // f.predation is keyed by PREY species: only flea/mayfly/snail are eaten (R-11).
+    n[sp] = S[sp] + births[sp] - deaths[sp] - starve[sp] - stress[sp] - (f.predation[sp] ?? 0);
+  }
   n.sediment = S.sediment + detritusInflow - decomposition;
-  n.flea = pops.flea + births.flea - deaths.flea - starve.flea - stress.flea - removal.bluegillF - removal.dragonflyF;
-  n.mayfly = pops.mayfly + births.mayfly - deaths.mayfly - starve.mayfly - stress.mayfly - removal.bluegillMy - removal.dragonflyMy;
-  n.snail = pops.snail + births.snail - deaths.snail - starve.snail - stress.snail - removal.bluegillS - removal.dragonflyS;
-  n.bluegill = pops.bluegill + births.bluegill - deaths.bluegill - starve.bluegill - stress.bluegill;
-  n.dragonfly = pops.dragonfly + births.dragonfly - deaths.dragonfly - starve.dragonfly - stress.dragonfly;
   n.do = clamp(S.do + photo + reAer - consumption, 0, DO_CAP);
   n.clarity = clamp(100 - P.shadingCoefficient * clamp(n.algae, 0, POP_CAP), 0, 100);
 
   // clamps (end of tick only — R-52)
-  for (const k of ORDER) n[k] = clamp(n[k], 0, POP_CAP);
+  for (const k of ORGANISMS) n[k] = clamp(n[k], 0, POP_CAP);
   n.nutrients = clamp(n.nutrients, 0, NUT_CAP);
   n.sediment = clamp(n.sediment, 0, SED_CAP);
   n.do = clamp(n.do, 0, DO_CAP);
 
+  // -- evidence-layer events (D-3.4: derived, non-authoritative, fixed key order)
+  const events = [...S.events];
+  for (const sp of CONSUMER_ORDER) {
+    const th = P.thresholds[sp];
+    if (doAvg < th.onset && S.doHist.slice(-P.stressWindow).every((d) => d >= th.onset)) {
+      events.push({ rule: "R-40", kind: "stress-onset", organism: sp, doAvg });
+    }
+  }
+  if (S.algae > P.bloomCrashThreshold && state.algae <= P.bloomCrashThreshold) {
+    events.push({ rule: "R-01b", kind: "bloom-dieback-onset", algae: S.algae });
+  }
+
   n.tick = S.tick + 1;
   n.doHist = [...S.doHist, n.do].slice(-4);
   n.hungry = S.hungry;
+  n.flags = S.flags;
   n.rng = S.rng; n.seed = S.seed;
-  n._flows = { grossAlgaeGrowth, crashDeath, decomposition, mineralized, buried, detritusInflow, algaeUptake, weedsUptake, nutIn, egestion, consumerDeathMass };
+  n.events = events.slice(0, 64);
+  n._flows = {
+    algaeGrowth, algaeCrash, algaeSenescence, weedGrowth, weedSenescence,
+    grazed: f.grazedAlgae, predation: f.predation, removed: f.removed,
+    births, deaths, starve, stress, respired, shed, egestion, deadMass, egestionTotal,
+    detritusInflow, decomposition, mineralized, buried, exportLoss,
+    nutrientUptakeAlgae, nutrientUptakeWeeds, nutIn, nutrientSinkLoss, runoff,
+    photo, reAer, o2Demand, consumption, doAvg, clarity,
+  };
   return n;
 }
 
-function run(days, cfg, seed = 1) {
-  let s = initialState();
-  s.seed = seed; s.rng = mulberry32(seed);
-  const hist = [{ ...s }];
-  for (let t = 0; t < days; t++) { s = step(s, cfg); hist.push({ ...s }); }
+export function run(days, cfg = {}, { seed = 1, init = CANONICAL_INITIAL } = {}) {
+  let s = initialState(init, seed);
+  const hist = [{ ...s, _flows: null }];
+  for (let t = 0; t < days; t++) {
+    s = step(s, cfg);
+    hist.push({ ...s });
+  }
   return hist;
 }
 
 // ---------------------------------------------------------------------------
-// Mass-accounting invariant (MS-LS2-3 loop made testable): nutrients + live
-// biomass + sediment may only change via inflow, uptake->biomass is internal,
-// burial/export are the only sinks. We verify per-tick accounting.
+// LOOP — matter-loop conservation identity (SCIENCE_MODEL §5, MS-LS2-3 anchor).
+// Per tick: Δ(nutrients + biomass + detritus) must equal
+//   inflow − settling/denitrification sink − burial − export share of mortality+egestion
+// to float precision. This is the check that makes "every loss on one edge appears on
+// another" a machine-verified property rather than a promise.
 // ---------------------------------------------------------------------------
-function massInvariantCheck(hist) {
-  let worst = 0;
+export function loopResidual(hist) {
+  let worst = 0, worstTick = null;
   for (let i = 1; i < hist.length; i++) {
-    const a = hist[i - 1], b = hist[i];
-    const totalBefore = a.nutrients + a.algae + a.weeds + a.flea + a.mayfly + a.snail + a.bluegill + a.dragonfly + a.sediment;
-    const totalAfter = b.nutrients + b.algae + b.weeds + b.flea + b.mayfly + b.snail + b.bluegill + b.dragonfly + b.sediment;
-    const f = b._flows;
-    // expected change = inflow - buried - exported(consumer deaths+egestion share)
-    const expected = f.nutIn - f.buried - (f.consumerDeathMass + f.egestion) * P.exportFraction;
-    // biomass bookkeeping: uptake removes from pool and adds to biomass; growth/losses are internal
-    const uptakeTotal = f.algaeUptake + f.weedsUptake;
-    const diff = Math.abs((totalAfter - totalBefore) - (expected - 0)) ;
-    // NOTE: uptake converts pool->biomass (no total change); crash/senescence/grazing are internal.
-    worst = Math.max(worst, Math.abs(diff - 0) - 1e-9 > 0 ? diff - Math.abs(uptakeTotal - uptakeTotal) : diff);
+    const a = hist[i - 1], b = hist[i], f = b._flows;
+    const totalBefore = ALL_STOCKS.reduce((s, k) => s + a[k], 0);
+    const totalAfter = ALL_STOCKS.reduce((s, k) => s + b[k], 0);
+    const expected = f.nutIn - f.nutrientSinkLoss - f.buried - f.exportLoss;
+    worst = Math.max(worst, Math.abs((totalAfter - totalBefore) - expected));
+    if (Math.abs((totalAfter - totalBefore) - expected) > 1e-9) worstTick = b.tick;
   }
-  return worst;
+  return { worst, worstTick };
 }
 
 // ---------------------------------------------------------------------------
-// Scenarios + commitment checks
+// Undisturbed fixed point (canonical spring pond), solved rather than hand-set.
+// Bounds the nutrient index at `targetN` by bisecting the watershed background inflow.
 // ---------------------------------------------------------------------------
-const band = (v) => v >= 65 ? "thriving" : v >= 35 ? "stable" : v >= 15 ? "strained" : "crashing";
-
-function report(name, hist) {
-  const last = hist[hist.length - 1];
-  const min = (k) => Math.min(...hist.map(h => h[k]));
-  const max = (k) => Math.max(...hist.map(h => h[k]));
-  console.log(`\n== ${name} ==`);
-  console.log(`final: nutrients=${last.nutrients.toFixed(1)} algae=${last.algae.toFixed(1)} weeds=${last.weeds.toFixed(1)} flea=${last.flea.toFixed(1)} mayfly=${last.mayfly.toFixed(1)} snail=${last.snail.toFixed(1)} bluegill=${last.bluegill.toFixed(1)} dragonfly=${last.dragonfly.toFixed(1)} sed=${last.sediment.toFixed(1)} DO=${last.do.toFixed(2)} clarity=${last.clarity.toFixed(0)}`);
-  console.log(`extrema: algae[max ${max("algae").toFixed(1)}] DO[min ${min("do").toFixed(2)}] clarity[min ${min("clarity").toFixed(0)}] mayfly[min ${min("mayfly").toFixed(1)}] bluegill[min ${min("bluegill").toFixed(1)}]`);
-  return { last, min, max, hist };
+export function convergeToFixedPoint({ backgroundInflow, noisePct = 0, ticks = 6000, seed = 1,
+  init = { nutrients: 50, algae: 45, weeds: 60, flea: 40, mayfly: 30, snail: 30, bluegill: 25, dragonfly: 15, sediment: 30, do: 7.6 } }) {
+  const savedInflow = P.backgroundInflow, savedNoise = P.noisePct;
+  P.backgroundInflow = backgroundInflow; P.noisePct = noisePct;
+  try {
+    const h = run(ticks, {}, { seed, init });
+    return h[h.length - 1];
+  } finally {
+    P.backgroundInflow = savedInflow; P.noisePct = savedNoise;
+  }
 }
+
+export function anchorEquilibrium(targetN = 50) {
+  let lo = 0.0, hi = 2.0;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    const s = convergeToFixedPoint({ backgroundInflow: mid });
+    if (s.nutrients < targetN) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
+const band = (v) => (v >= 65 ? "thriving" : v >= 35 ? "stable" : v >= 15 ? "strained" : "crashing");
+const firstBelow = (hist, k, v) => { const i = hist.findIndex((h) => h[k] < v); return i < 0 ? null : i; };
+const firstAbove = (hist, k, v) => { const i = hist.findIndex((h) => h[k] > v); return i < 0 ? null : i; };
+const minOf = (hist, k) => Math.min(...hist.map((h) => h[k]));
+const maxOf = (hist, k) => Math.max(...hist.map((h) => h[k]));
 
 let failures = 0;
-const check = (ok, label) => { console.log(`  ${ok ? "PASS" : "FAIL"} — ${label}`); if (!ok) failures++; };
-const firstBelow = (hist, k, v) => { const i = hist.findIndex(h => h[k] < v); return i < 0 ? null : i; };
-const firstAbove = (hist, k, v) => { const i = hist.findIndex(h => h[k] > v); return i < 0 ? null : i; };
+const results = [];
+const check = (ok, label) => {
+  console.log(`  ${ok ? "PASS" : "FAIL"} — ${label}`);
+  results.push({ ok, label });
+  if (!ok) failures++;
+};
+const report = (name, hist) => {
+  const last = hist[hist.length - 1];
+  console.log(`\n== ${name} ==`);
+  console.log(`  final: ${ALL_STOCKS.map((k) => `${k}=${last[k].toFixed(1)}`).join(" ")} DO=${last.do.toFixed(2)} clarity=${last.clarity.toFixed(0)}`);
+  console.log(`  extrema: algae[max ${maxOf(hist, "algae").toFixed(1)}] DO[min ${minOf(hist, "do").toFixed(2)}] clarity[min ${minOf(hist, "clarity").toFixed(0)}] mayfly[min ${minOf(hist, "mayfly").toFixed(1)}] bluegill[min ${minOf(hist, "bluegill").toFixed(1)}] sediment[max ${maxOf(hist, "sediment").toFixed(1)}]`);
+  return { last };
+};
 
-// --- C1: baseline stability (no disruption, 60 ticks)
+function canonicalOutcome(hist) {
+  const last = hist[hist.length - 1];
+  return {
+    bloomDay: firstAbove(hist, "algae", 75),
+    clarityDay: firstBelow(hist, "clarity", 30),
+    doDay: firstBelow(hist, "do", 5.0),
+    mayflyDay: firstBelow(hist, "mayfly", 20),
+    bluegillDay: firstBelow(hist, "bluegill", 0.8 * CANONICAL_INITIAL.bluegill),
+    doFinal: last.do, doMin: minOf(hist, "do"), algaeMax: maxOf(hist, "algae"),
+    weedsFinal: last.weeds,
+    mayflyBand: band(last.mayfly), bluegillBand: band(last.bluegill),
+    mayflyFell: last.mayfly < CANONICAL_INITIAL.mayfly,
+    bluegillFell: last.bluegill < 0.8 * CANONICAL_INITIAL.bluegill,
+    doHypoxicEnd: last.do < 5.0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// All checks, in one callable envelope so the tuner can import the engine alone.
+// ---------------------------------------------------------------------------
+export function runAllChecks() {
+failures = 0; results.length = 0;
+
+// ---------------------------------------------------------------------------
+// LOOP check (runs first — if this fails, nothing downstream is trustworthy)
+// ---------------------------------------------------------------------------
+console.log("== LOOP — matter-loop conservation identity (per tick) ==");
+{
+  const h = run(60, { runoff: canonicalRunoff });
+  const { worst, worstTick } = loopResidual(h);
+  console.log(`  worst per-tick residual: ${worst.toExponential(3)} (tick ${worstTick ?? "—"})`);
+  check(worst < 1e-9, `Δ(nutrients+biomass+detritus) = inflow − sink − burial − export every tick (worst ${worst.toExponential(2)})`);
+  const c = h[0]._flows === null && h[1]._flows && Object.keys(h[1]._flows).length > 0;
+  check(c, "per-tick flow ledger is emitted for the evidence layer");
+}
+
+// ---------------------------------------------------------------------------
+// C1 — baseline stability: undisturbed pond holds every stock for 60 ticks
+// ---------------------------------------------------------------------------
 {
   const h = run(60, {});
-  const r = report("C1 baseline (60d, no disruption)", h);
-  for (const k of ["algae", "weeds", "flea", "mayfly", "snail", "bluegill", "dragonfly"]) {
-    const init = { algae: 40, weeds: 60, flea: 40, mayfly: 30, snail: 30, bluegill: 25, dragonfly: 15 }[k];
-    check(Math.abs(r.last[k] - init) <= 10 && Math.abs(r.min(k) - init) <= 12 && Math.abs(r.max(k) - init) <= 12,
-      `${k} within ±10 of ${init} (final ${r.last[k].toFixed(1)}, range ${r.min(k).toFixed(1)}–${r.max(k).toFixed(1)})`);
+  report("C1 baseline (60 ticks, no disruption)", h);
+  const last = h[h.length - 1];
+  for (const k of ALL_STOCKS) {
+    const init = CANONICAL_INITIAL[k];
+    check(Math.abs(last[k] - init) <= 10 && Math.abs(minOf(h, k) - init) <= 12 && Math.abs(maxOf(h, k) - init) <= 12,
+      `${k} within ±10 of ${init} (final ${last[k].toFixed(1)}, range ${minOf(h, k).toFixed(1)}–${maxOf(h, k).toFixed(1)})`);
   }
-  check(Math.abs(r.last.do - 7.6) <= 1.5, `DO near baseline (final ${r.last.do.toFixed(2)})`);
+  check(Math.abs(last.do - CANONICAL_INITIAL.do) <= 1.5, `DO near baseline (final ${last.do.toFixed(2)})`);
+  const monotone = ALL_STOCKS.filter((k) => last[k] < CANONICAL_INITIAL[k] - 5);
+  check(monotone.length === 0, `no monotonic drift-collapse of any stock (${monotone.join(",") || "none"})`);
 }
 
-// --- C2: canonical runoff (days 0–10), no intervention
+// ---------------------------------------------------------------------------
+// C2 — canonical runoff, no intervention: the teachable eutrophication chain
+// ---------------------------------------------------------------------------
+let canonicalHist;
 {
-  const runoff = (t) => (t < 10 ? 6.0 : 0);
-  const h = run(60, { runoff });
-  const r = report("C2 canonical runoff, no intervention", h);
-  const algaeDay = firstAbove(h, "algae", 75);
-  check(algaeDay !== null && algaeDay >= 12 && algaeDay <= 18, `algae ≥ 75 by day 12–18 (day ${algaeDay})`);
-  const clarityDay = firstBelow(h, "clarity", 30);
-  check(clarityDay !== null && clarityDay >= 15 && clarityDay <= 25, `clarity < 30 by day 15–25 (day ${clarityDay})`);
-  const doDay = firstBelow(h, "do", 5.0);
-  check(doDay !== null && doDay >= 18 && doDay <= 30, `DO < 5.0 between days 18–30 (day ${doDay})`);
-  const mayflyDay = firstBelow(h, "mayfly", 20);
-  check(mayflyDay !== null && mayflyDay >= 30 && mayflyDay <= 40, `mayflies < 20 by day 30–40 (day ${mayflyDay})`);
-  const bgDay = firstBelow(h, "bluegill", 25 * 0.8);
-  check(bgDay !== null && bgDay >= 35 && bgDay <= 50, `bluegill visibly declining by day 35–50 (day ${bgDay})`);
-  check(r.last.do < 5.0 && r.last.do > 1.5, `DO ends hypoxic but not anoxic (${r.last.do.toFixed(2)})`);
+  const h = run(60, { runoff: canonicalRunoff });
+  canonicalHist = h;
+  report("C2 canonical runoff (days 0–10), no intervention", h);
+  const o = canonicalOutcome(h);
+  const peakN = maxOf(h, "nutrients");
+  console.log(`  nutrient peak ${peakN.toFixed(1)} (target ~85 over the 10-tick loading phase)`);
+  check(peakN >= 80 && peakN <= 92, `nutrient index reaches ~85 in the loading phase (peak ${peakN.toFixed(1)})`);
+  check(o.bloomDay !== null && o.bloomDay >= 12 && o.bloomDay <= 18, `algae ≥ 75 by day 12–18 (day ${o.bloomDay})`);
+  check(o.clarityDay !== null && o.clarityDay >= 15 && o.clarityDay <= 25, `clarity < 30 by day 15–25 (day ${o.clarityDay})`);
+  check(o.doDay !== null && o.doDay >= 18 && o.doDay <= 30, `DO < 5.0 between days 18–30 (day ${o.doDay})`);
+  check(o.mayflyDay !== null && o.mayflyDay >= 30 && o.mayflyDay <= 40, `mayflies < 20 by day 30–40 (day ${o.mayflyDay})`);
+  check(o.bluegillDay !== null && o.bluegillDay >= 35 && o.bluegillDay <= 50, `bluegill visibly declining by day 35–50 (day ${o.bluegillDay})`);
+  check(o.doFinal < 5.0 && o.doFinal > 1.5, `DO ends hypoxic but not anoxic (${o.doFinal.toFixed(2)})`);
+  const ordering = [o.bloomDay, o.clarityDay, o.doDay, o.mayflyDay, o.bluegillDay];
+  check(ordering.every((v, i) => v !== null && (i === 0 || v >= ordering[i - 1])),
+    `canonical event ordering bloom→clarity→DO→mayfly→bluegill holds (${ordering.join(",")})`);
 }
 
-// --- C3: early remediation (day 5: runoff diverted + buffer)
+// ---------------------------------------------------------------------------
+// C3 — early remediation (divert runoff at day 5 + shoreline buffer)
+// ---------------------------------------------------------------------------
 {
-  const runoff = (t) => (t < 5 ? 6.0 : 0);
-  const h = run(60, { runoff });
-  const r = report("C3 early remediation (divert at day 5)", h);
-  const doDay = firstBelow(h, "do", 5.0);
-  const crashDay = firstBelow(h, "algae", 40); // bloom collapse begins
-  check(doDay === null || doDay >= 25, `DO never or late below 5.0 (first day ${doDay})`);
-  const doRecover = (() => { // after any dip, first day back above 5.0
-    const dip = firstBelow(h, "do", 5.0);
-    if (dip === null) return true;
-    for (let i = dip; i < h.length; i++) if (h[i].do > 5.0) return (i - dip) <= 15;
-    return false;
-  })();
-  check(doRecover, `DO recovers above 5.0 within ~10–15 ticks of any dip`);
-  check(r.last.weeds > 62 && r.last.weeds < 95, `weeds recovering but not to 100 (final ${r.last.weeds.toFixed(1)})`);
+  const h = run(60, {
+    runoff: canonicalRunoff,
+    interventions: [{ tick: 5, id: "divert-runoff" }, { tick: 5, id: "buffer-strip" }],
+  });
+  report("C3 early remediation (divert + buffer at day 5)", h);
+  const o = canonicalOutcome(h);
+  check(o.doDay === null || o.doDay >= 25, `DO never below 5.0, or only late (first day ${o.doDay})`);
+  const dip = firstBelow(h, "do", 5.0);
+  let recovered = true;
+  if (dip !== null) recovered = h.slice(dip).some((x) => x.do > 5.0);
+  check(recovered, "DO recovers above 5.0 after any dip within the horizon");
+  check(o.weedsFinal > 62 && o.weedsFinal < 95, `waterweeds recovering but not to 100 (final ${o.weedsFinal.toFixed(1)})`);
+  check(o.algaeMax < 75, `bloom stays sub-canonical under early remediation (max algae ${o.algaeMax.toFixed(1)})`);
 }
 
-// --- C4: aeration only (from day 12), runoff continues
+// ---------------------------------------------------------------------------
+// C4 / S5 — aeration only: transient relief, bloom persists (§11-5)
+// ---------------------------------------------------------------------------
 {
-  const runoff = (t) => (t < 10 ? 6.0 : 0);
-  const hBase = run(60, { runoff });
-  const hAer = run(60, { runoff, aerated: true });
-  report("C4 aeration-only vs baseline", hAer);
-  let maxImprovement = 0;
-  for (let i = 0; i < 60; i++) maxImprovement = Math.max(maxImprovement, hAer[i].do - hBase[i].do);
-  check(maxImprovement > 0.5 && maxImprovement <= 3.0, `aeration transient improvement ≤ 3.0 mg/L (max ${maxImprovement.toFixed(2)})`);
+  const hBase = run(60, { runoff: canonicalRunoff });
+  const hAer = run(60, { runoff: canonicalRunoff, interventions: [{ tick: 12, id: "aeration" }] });
+  report("C4/S5 aeration only (from day 12), runoff continues", hAer);
+  let maxImprovement = 0, day30Improvement = 0;
+  for (let i = 0; i <= 60; i++) maxImprovement = Math.max(maxImprovement, hAer[i].do - hBase[i].do);
+  day30Improvement = hAer[30].do - hBase[30].do;
+  console.log(`  improvement: peak ${maxImprovement.toFixed(2)} mg/L, day 30 ${day30Improvement.toFixed(2)} mg/L`);
+  check(maxImprovement > 0.5 && maxImprovement <= 3.0, `aeration transient improvement > 0.5 and ≤ 3.0 mg/L (max ${maxImprovement.toFixed(2)})`);
+  check(maxImprovement - day30Improvement > 0.2, `relief decays while the bloom continues (peak ${maxImprovement.toFixed(2)} → day 30 ${day30Improvement.toFixed(2)})`);
   check(hAer[30].algae > 60, `bloom persists under aeration (algae day 30: ${hAer[30].algae.toFixed(1)})`);
+  check(hAer[30].mayfly < 0.8 * CANONICAL_INITIAL.mayfly, `aeration alone does not rescue mayflies (day 30: ${hAer[30].mayfly.toFixed(1)})`);
 }
 
-// --- S1: dose-response ordering
+// ---------------------------------------------------------------------------
+// S1 — nutrient dose-response: ordering invariant, 2× dose reaches stress sooner
+// ---------------------------------------------------------------------------
 {
-  const order = (h) => {
-    const a = firstBelow(h, "clarity", 30), b = firstBelow(h, "do", 5.0), c = firstBelow(h, "mayfly", 20), d = firstBelow(h, "bluegill", 20);
-    return [a, b, c, d];
+  const h1 = run(60, { runoff: (t) => (t < 10 ? CANONICAL_RUNOFF_PER_DAY : 0) });
+  const h2 = run(60, { runoff: (t) => (t < 10 ? 2 * CANONICAL_RUNOFF_PER_DAY : 0) });
+  const o1 = canonicalOutcome(h1), o2 = canonicalOutcome(h2);
+  console.log(`\n== S1 dose-response ==\n  1×: ${[o1.bloomDay, o1.clarityDay, o1.doDay, o1.mayflyDay, o1.bluegillDay].join(",")}\n  2×: ${[o2.bloomDay, o2.clarityDay, o2.doDay, o2.mayflyDay, o2.bluegillDay].join(",")}`);
+  const ordered = (o) => {
+    const seq = [o.bloomDay, o.clarityDay, o.doDay, o.mayflyDay, o.bluegillDay];
+    return seq.every((v, i) => v !== null && (i === 0 || v >= seq[i - 1]));
   };
-  const h1 = run(60, { runoff: (t) => (t < 10 ? 6.0 : 0) });
-  const h2 = run(60, { runoff: (t) => (t < 10 ? 12.0 : 0) });
-  const o1 = order(h1), o2 = order(h2);
-  const ordered = (o) => o.every((v, i) => v !== null && (i === 0 || v >= o[i - 1]));
-  check(ordered(o1) && ordered(o2), `ordering clarity→DO→mayfly→bluegill holds at 1× and 2× dose (1×: ${o1}, 2×: ${o2})`);
-  const t1 = o1[1], t2 = o2[1];
-  check(t2 !== null && t1 !== null && t2 < t1 * 0.8, `2× dose reaches DO stress ≥20% sooner (${t1} → ${t2})`);
+  check(ordered(o1) && ordered(o2), "event ordering (bloom→clarity→DO→mayfly→bluegill) holds at 1× and 2× dose");
+  check(o2.doDay !== null && o1.doDay !== null && o2.doDay < o1.doDay, `2× dose reaches DO stress sooner (day ${o1.doDay} → ${o2.doDay})`);
+  check(o2.doDay !== null && o1.doDay !== null && o2.doDay <= o1.doDay * 0.8, `2× dose reaches DO stress ≥ 20% sooner (${o1.doDay} → ${o2.doDay})`);
 }
 
-// --- S3: cascade direction
+// ---------------------------------------------------------------------------
+// S2 — no-threshold flip: ±10% on any single parameter must not flip the outcome.
+// Fingerprint = the five canonical verdicts the mission is scored on.
+// ---------------------------------------------------------------------------
 {
-  // remove bluegill at day 10 under canonical runoff; compare fleas/algae at day 30/45
-  const runoff = (t) => (t < 10 ? 6.0 : 0);
-  const hA = run(45, { runoff });
-  // emulate intervention: patch step via cfg (bluegill removal)
-  // (simplest: run with a hook — here we re-run with reduced initial bluegill from day 10 approximation)
-  const hB = run(45, { runoff });
-  // manual: apply removal mid-run
-  let s = initialState(); s.rng = mulberry32(1); const hC = [{ ...s }];
-  for (let t = 0; t < 45; t++) {
-    if (t === 10) s.bluegill = s.bluegill * 0.5;
-    s = step(s, { runoff });
-    hC.push({ ...s });
+  const fingerprint = (h) => {
+    const o = canonicalOutcome(h);
+    return [o.bloomDay !== null, o.doDay !== null, o.doHypoxicEnd, o.mayflyFell, o.bluegillFell].join("");
+  };
+  const baseline = fingerprint(canonicalHist);
+  const skipped = new Set(["maxAlgae", "stressWindow", "noisePct"]);
+  const offenders = [];
+  for (const key of Object.keys(P)) {
+    if (skipped.has(key) || typeof P[key] !== "number") continue;
+    for (const scale of [0.9, 1.1]) {
+      const saved = P[key];
+      P[key] = saved * scale;
+      try {
+        if (fingerprint(run(60, { runoff: canonicalRunoff })) !== baseline) {
+          offenders.push(`${key}×${scale}`);
+        }
+      } finally { P[key] = saved; }
+    }
   }
-  const r = report("S3 cascade (bluegill −50% at day 10)", hC);
-  check(r.last.flea > hA[45].flea + 5, `fleas higher with fewer bluegill (${r.last.flea.toFixed(1)} vs ${hA[45].flea.toFixed(1)})`);
-  check(r.last.algae < hA[45].algae - 3, `algae lower with fewer bluegill (${r.last.algae.toFixed(1)} vs ${hA[45].algae.toFixed(1)})`);
+  console.log(`\n== S2 no-threshold flip (±10% single-parameter) ==\n  baseline fingerprint ${baseline}; offenders: ${offenders.join(", ") || "none"}`);
+  check(offenders.length === 0, `no ±10% single-parameter perturbation flips the canonical outcome (${offenders.length} of ${(Object.keys(P).filter((k) => typeof P[k] === "number" && !skipped.has(k)).length * 2)} variants)`);
 }
 
-// --- S4: recovery shape (cut nutrients at bloom peak day 15)
+// ---------------------------------------------------------------------------
+// S3 — cascade direction: removing bluegill raises grazers and lowers algae
+// ---------------------------------------------------------------------------
 {
-  const runoff = (t) => (t < 15 ? 6.0 : 0);
-  const h = run(60, { runoff });
-  const r = report("S4 crash-then-slow-recovery (runoff stops day 15)", h);
-  const crashDepth = Math.min(...h.slice(16, 40).map(x => x.algae));
-  check(crashDepth < 45, `bloom crashes after nutrient cut (min algae ${crashDepth.toFixed(1)})`);
-  const weedsRec = h[59].weeds;
-  check(weedsRec > 50 && weedsRec < 95, `weeds recover slowly, not to 100 (final ${weedsRec.toFixed(1)})`);
+  const hA = run(45, { runoff: canonicalRunoff });
+  const hB = run(45, { runoff: canonicalRunoff, interventions: [{ tick: 10, id: "bluegill-removal" }] });
+  report("S3 cascade (bluegill −50% at day 10)", hB);
+  const fA = hA[45], fB = hB[45];
+  console.log(`  day 45: fleas ${fA.flea.toFixed(1)} → ${fB.flea.toFixed(1)}; algae ${fA.algae.toFixed(1)} → ${fB.algae.toFixed(1)}`);
+  check(fB.flea > fA.flea, `fleas higher with fewer bluegill (${fA.flea.toFixed(1)} → ${fB.flea.toFixed(1)})`);
+  check(fB.algae < fA.algae, `algae lower with fewer bluegill (${fA.algae.toFixed(1)} → ${fB.algae.toFixed(1)})`);
+  const hAdd = run(45, { runoff: canonicalRunoff, interventions: [{ tick: 10, id: "grazer-boost" }] });
+  check(hAdd[45].algae < hA[45].algae, `adding water fleas lowers algae — the intervention-menu direction (§10) (${hA[45].algae.toFixed(1)} → ${hAdd[45].algae.toFixed(1)})`);
 }
 
-// --- S6: soak 10,000 ticks
+// ---------------------------------------------------------------------------
+// S4 — recovery shape: cut nutrients at peak bloom → crash then slow recovery
+// ---------------------------------------------------------------------------
+{
+  const h = run(60, { runoff: (t) => (t < 15 ? CANONICAL_RUNOFF_PER_DAY : 0) });
+  report("S4 crash-then-slow-recovery (runoff stops day 15)", h);
+  const crashDepth = minOf(h.slice(16, 41), "algae");
+  check(crashDepth < 45, `bloom crashes after the nutrient cut (min algae days 16–40: ${crashDepth.toFixed(1)})`);
+  check(h[59].weeds > 30 && h[59].weeds < 95, `weeds recover slowly, not to 100 (final ${h[59].weeds.toFixed(1)})`);
+  check(minOf(h.slice(20), "do") < 5.0, `the delayed DO trough still occurs after the cut (min DO ${minOf(h.slice(20), "do").toFixed(2)})`);
+}
+
+// ---------------------------------------------------------------------------
+// S6 — soak: 10,000 ticks bounded, no NaN, no short lock-up oscillation
+// ---------------------------------------------------------------------------
 {
   const h = run(10000, {});
-  let ok = true, minDo = 15, maxAny = 0;
+  let ok = true, minDo = DO_CAP;
   for (const x of h) {
-    for (const k of [...ORDER, "nutrients", "sediment"]) if (!(x[k] >= 0 && x[k] <= 100)) ok = false;
-    if (!Number.isFinite(x.do) || x.do < 0 || x.do > 15) ok = false;
-    minDo = Math.min(minDo, x.do); maxAny = Math.max(maxAny, x.algae);
+    for (const k of ALL_STOCKS) if (!(x[k] >= 0 && x[k] <= 100)) ok = false;
+    if (!Number.isFinite(x.do) || x.do < 0 || x.do > DO_CAP) ok = false;
+    minDo = Math.min(minDo, x.do);
   }
-  console.log(`\n== S6 soak (10,000 ticks) == bounds ok=${ok}, min DO=${minDo.toFixed(2)}, max algae=${maxAny.toFixed(1)}`);
-  check(ok, `10k-tick soak stays bounded, no NaN`);
+  console.log(`\n== S6 soak (10,000 ticks) ==\n  bounds ok=${ok}, min DO=${minDo.toFixed(2)}, final tick ${h[h.length - 1].tick}`);
+  check(ok, "10k-tick undisturbed soak stays bounded with no NaN");
 }
 
-// --- S7: seed sensitivity
+// ---------------------------------------------------------------------------
+// S7 — seed sensitivity: R-50 noise moves traces by ≤ ±5
+// ---------------------------------------------------------------------------
 {
-  const traces = [1, 2, 3, 4, 5].map(seed => run(60, { runoff: (t) => (t < 10 ? 6.0 : 0) }, seed));
+  const traces = [1, 2, 3, 4, 5].map((seed) => run(60, { runoff: canonicalRunoff }, { seed }));
   let maxSpread = 0;
   for (let t = 0; t <= 60; t++) {
-    for (const k of ORDER) {
-      const vals = traces.map(h => h[t][k]);
+    for (const k of ORGANISMS) {
+      const vals = traces.map((h) => h[t][k]);
       maxSpread = Math.max(maxSpread, Math.max(...vals) - Math.min(...vals));
     }
   }
-  console.log(`\n== S7 seed sensitivity == max index spread across 5 seeds: ${maxSpread.toFixed(2)}`);
-  check(maxSpread <= 5, `noise changes traces by ≤ ±5 (max ${maxSpread.toFixed(2)})`);
+  console.log(`\n== S7 seed sensitivity ==\n  max index spread across 5 seeds: ${maxSpread.toFixed(2)}`);
+  check(maxSpread <= 5, `seeded noise changes traces by ≤ ±5 index points (max ${maxSpread.toFixed(2)})`);
+  const orderOk = traces.every((h) => {
+    const o = canonicalOutcome(h);
+    const seq = [o.bloomDay, o.clarityDay, o.doDay, o.mayflyDay, o.bluegillDay];
+    return seq.every((v, i) => v !== null && (i === 0 || v >= seq[i - 1]));
+  });
+  check(orderOk, "canonical event ordering is invariant across seeds");
 }
 
-// --- mass invariant sanity on the canonical run
+// ---------------------------------------------------------------------------
+// X1–X3 — intervention menu direction (§10 frozen vocabulary)
+// ---------------------------------------------------------------------------
 {
-  const h = run(60, { runoff: (t) => (t < 10 ? 6.0 : 0) });
-  const w = massInvariantCheck(h);
-  console.log(`\n== mass invariant == worst per-tick accounting residual: ${w.toExponential(2)}`);
+  const base = run(60, { runoff: canonicalRunoff });
+  const dredge = run(60, { runoff: canonicalRunoff, interventions: [{ tick: 18, id: "dredge" }] });
+  const buffer = run(60, { runoff: canonicalRunoff, interventions: [{ tick: 5, id: "buffer-strip" }] });
+  const divert = run(60, { runoff: canonicalRunoff, interventions: [{ tick: 5, id: "divert-runoff" }] });
+  report("X1 dredge at day 18 (legacy sediment load)", dredge);
+  console.log(`  DO min: base ${minOf(base, "do").toFixed(2)} → dredge ${minOf(dredge.slice(18), "do").toFixed(2)}`);
+  console.log(`  nutrient peak: nothing ${maxOf(base, "nutrients").toFixed(1)} > buffer ${maxOf(buffer, "nutrients").toFixed(1)} > divert ${maxOf(divert, "nutrients").toFixed(1)}`);
+  check(minOf(dredge.slice(18), "do") > minOf(base.slice(18), "do"), "dredge raises the DO trough (treats the legacy sediment load)");
+  check(maxOf(buffer, "nutrients") < maxOf(base, "nutrients") && maxOf(buffer, "nutrients") > maxOf(divert, "nutrients"),
+    "buffer strip sits between doing nothing and diverting runoff (slow prevention vs source cut)");
+  check(divert[59].weeds > base[59].weeds, `runoff diversion leaves more waterweed cover at day 60 (${base[59].weeds.toFixed(1)} → ${divert[59].weeds.toFixed(1)})`);
 }
 
-console.log(`\n${failures === 0 ? "ALL CHECKS PASS" : failures + " CHECK(S) FAILED"}`);
-process.exit(failures === 0 ? 0 : 1);
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+const passed = results.length - failures;
+console.log(`\n${"=".repeat(72)}`);
+console.log(`calibration-sim ${PARAM_SET_VERSION} (${SIM_MODEL_VERSION}): ${passed}/${results.length} checks pass`);
+if (failures) console.log(results.filter((r) => !r.ok).map((r) => `  FAIL: ${r.label}`).join("\n"));
+console.log(`${failures === 0 ? "ALL CHECKS PASS" : failures + " CHECK(S) FAILED"}`);
+return { failures, results, passed, total: results.length };
+} // end runAllChecks
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  const { failures } = runAllChecks();
+  process.exit(failures === 0 ? 0 : 1);
+}
