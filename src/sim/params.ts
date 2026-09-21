@@ -16,7 +16,7 @@ export const PARAM_SET_VERSION = "pc1-params-1.3";
 
 /** Model units → fixed point, once, at load. */
 const s = (modelUnits: number): number => Math.round(modelUnits * SCALE);
-/** mg/L → deci-mg/L, once, at load. */
+/** Mg/L → fixed point, once, at load. DO shares SCALE, so this is the same conversion. */
 const d = (mgPerL: number): number => Math.round(mgPerL * DO_SCALE);
 
 /** Producers (R-01, R-01b, R-03, R-04). */

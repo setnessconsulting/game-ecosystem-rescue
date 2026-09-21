@@ -113,4 +113,26 @@ describe("rule directions (SCIENCE_MODEL §11 sanity tests, core slice)", () => 
       expect(state.do).toBeLessThanOrEqual(15 * DO_SCALE);
     }
   });
+
+  // The tests above are invariants: bounds and conservation. Neither of them noticed that dissolved
+  // oxygen read 0.0 mg/L after a week of mild loading, because 0.0 is inside the bounds and the
+  // matter loop was still exact. These two tests check the physics instead — an undisturbed pond
+  // holds its oxygen, and a heavy detritus load pulls it down — which is the behaviour the mission
+  // depends on and the class of bug the bounds cannot see.
+  it("holds dissolved oxygen in a healthy range on an undisturbed pond", () => {
+    for (const { state } of run(60, quiet)) {
+      const mgPerL = state.do / DO_SCALE;
+      expect(mgPerL, `DO fell to ${mgPerL.toFixed(2)} with no runoff at all`).toBeGreaterThan(6.0);
+      expect(mgPerL).toBeLessThan(15);
+    }
+  });
+
+  it("lets oxygen fall when a heavy detritus load is decomposing", () => {
+    // A full pond's worth of detritus (index 100) is a bloom the size of the pond dying at once: the
+    // demand has to visibly bite into the oxygen rather than being rounded away by the scale.
+    const loaded = { ...initialState(), detritus: 100 * SCALE };
+    let s = loaded;
+    for (let i = 0; i < 10; i++) s = tick(s, quiet).state;
+    expect(s.do / DO_SCALE).toBeLessThan(loaded.do / DO_SCALE);
+  });
 });

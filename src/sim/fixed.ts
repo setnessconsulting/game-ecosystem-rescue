@@ -7,7 +7,17 @@
 // Magnitudes: stocks are ≤ 100 → ≤ 100_000 scaled. A product of two scaled values is ≤ 10^10, far
 // inside the exact-integer range of a JS number (2^53), so `mul` never loses precision.
 export const SCALE = 1000;
-export const DO_SCALE = 10;
+/**
+ * Dissolved oxygen is carried at the SAME resolution as every other quantity, not at one decimal.
+ *
+ * SCIENCE_MODEL R-51 says "DO keeps one decimal (scale 10)". That is right for what the learner
+ * sees and wrong for the arithmetic: a tick's oxygen fluxes are on the order of 0.08 mg/L, so at
+ * scale 10 every one of them truncates to zero and the oxygen stops responding to the pond at all
+ * (measured: the demand term came out 100x too large once the mixed scales were reconciled, and the
+ * pond read 0.0 mg/L after a week of mild loading). The value is therefore stored at SCALE and
+ * rounded to one decimal at the presentation boundary, which is where the R-51 rule is enforced.
+ */
+export const DO_SCALE = SCALE;
 
 /** Largest index / stock value, in model units. */
 export const INDEX_MAX = 100;
