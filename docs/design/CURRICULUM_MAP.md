@@ -43,7 +43,7 @@ Coverage classes: **Direct** — the mechanic is the PE practiced in-game; **Sup
 
 ● = explicit target of the mechanic. ○ = incidentally exercised.
 
-**Direct-coverage guarantee:** each PE is hit by ≥3 Direct mechanics; each Direct mechanic maps to ≥1 PE and one observable learner-evidence artifact. No PE is covered by content text alone: LS2-1 (runoff→bloom, DO stress, contrast pairs, evidence classification), LS2-2 (food web, shading competition, cascade lever), LS2-3 (decomposer loop, food-web transfer arrows, boundary notes), LS2-4 (prediction/compare loop, evidence classification, ordering evidence, intervention testing), LS2-5 (intervention tradeoffs, competing solutions, revision path).
+**Direct-coverage guarantee:** each PE is hit by ≥2 **learner-evidence-bearing** Direct mechanics backed by a frozen rule, and every PE has ≥3 Direct-class mechanics counted by the matrix above (counting rows whose class cell names that PE in Direct). No PE is covered by content text alone: LS2-1 (runoff→bloom, DO stress, contrast pairs, evidence classification), LS2-2 (food web, shading competition, cascade lever), LS2-3 (decomposer loop, food-web transfer arrows, **nutrient-loop budget accounting (R-21 mineralization/egestion/export — Direct, evidence: traced loop with conservation accounting)**, boundary notes), LS2-4 (prediction/compare loop, evidence classification, ordering evidence, intervention testing), LS2-5 (intervention tradeoffs, competing solutions, revision path).
 
 ## 3. Mission ↔ PE mapping
 

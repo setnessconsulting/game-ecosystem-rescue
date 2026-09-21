@@ -2,12 +2,14 @@
 
 | | |
 | --- | --- |
-| Status | **FROZEN v1.0 (GAME-317 / ER-01)** — binding for ER-03 (simulation kernel) and ER-04 (scenario content) |
+| Status | **FROZEN v1.0, STRUCTURAL REVISION v1.1 (GAME-317 / ER-01)** — see banner below. Rules/structure are frozen; the v1.0 numeric parameter set is **SUPERSEDED pending recalibration** (§9 banner). |
 | Model class | Pedagogical causal model — **not** a research-grade ecology simulator |
 | Rule IDs | `R-*` (stable identifiers; ER-03 code and golden traces must reference these IDs) |
 | Model version identity | `SIM_MODEL_VERSION = "pond-crisis-1.0"`, `PARAM_SET_VERSION = "pc1-params-1.0"` (emitted in every replay trace) |
 | Curriculum anchors | [CURRICULUM_MAP.md](CURRICULUM_MAP.md) — MS-LS2-1…MS-LS2-5 |
 | Review requirement | ER-04 requires an independent, source-based science review bound to this document's exact revision (GAME-317 acceptance) |
+
+> **ER-01 close-out banner (2026-09-21, review finding dispositions).** Independent fresh-context review (REVIEW_ER01.md, packet A) demonstrated by scratch simulation that the v1.0 parameter set cannot produce the canonical hypoxia outcome and that the nutrient loop lacked two load-bearing formulas. Structural fixes below are **frozen now** (they change rule form, which is a SIM_MODEL_VERSION event): (1) R-01b bloom-crash is an explicit decay-from-excess flow at a frozen rate — the logistic term never inverts, ceiling = 0 means exponential crash, crash mortality flows to detritus; (2) R-21 gains `mineralizationFraction` (decomposed matter returns to the nutrient pool; remainder buried/exported — closes the MS-LS2-3 loop); (3) R-20 gains `egestionFraction` and `exportFraction` (grazing/predation unassimilated mass → detritus; a frozen share of consumer mortality + egestion leaves the pond — emergence/outflow), so `p.nutrientSink` no longer drains a nominally closed baseline; (4) R-30 gains explicit `backgroundInflow`; (5) R-10 consumer→prey removal is directly parameterized per link (`p.removalRate.*`), not derived from intake; (6) R-41 starvation escalation is `p.starveBase × min(p.starveCap, 1 + p.starveEscalation × (hungryTicks − 3))` per tick after the 3rd hungry tick; (7) R-40 bluegill onset is **5.0 mg/L** (matching S7/S8) with severe at 2.5, and the stress input is a **2-tick** running average; (8) §6.5 freezes the per-tick evaluation order (all flows from the pre-tick snapshot, single update pass, clamps end-of-tick only). The §9 numeric values are being recalibrated against §11 commitments with `evidence/calibration-sim.mjs` (run it: `node docs/design/evidence/calibration-sim.mjs`); **ER-03 must not begin until that harness passes and §9 is re-frozen as `pc1-params-1.1` with a Jira record.**
 
 > **Sourcing policy.** Every canonical rule carries a source with provenance. No rule or number in this document may be treated as science truth merely because a model or prompt generated it. Sources marked **[Q]** are quantitative and anchor a model number; **[C]** are qualitative/contextual. Where a real-world value is simplified into model units, the simplification is stated at the rule.
 
