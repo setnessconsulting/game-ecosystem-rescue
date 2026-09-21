@@ -292,6 +292,8 @@ what was decided, and what remains. Evidence detail: [EVIDENCE.md](EVIDENCE.md) 
 
 **Handoff.** The exact numeric demonstration of the §11 windows is an **ER-04** deliverable. This section's job was to make the rules honest, internally consistent, and *specified* — not to finish the calibration. The harness, the provisional values and the F-1…F-7 diagnosis are ER-04's starting point.
 
+**Scratch calibration tooling (git-excluded, on this host only).** The search that produced the provisional values lives in the repository's `.tmp/` directory and is **not committed** (`.tmp/` is git-excluded by design): a coordinate-descent search driver that mirrors every harness check as a penalty and derives the pristine baseline per candidate vector, a single-run tracer for day-by-day state and flow inspection, an attractor scan over the watershed inflow, and a per-species mass-budget probe. They are named here so ER-04 can find and rebuild them rather than rediscovering the two traps this session hit — that the settle must be a *controller* (a bisection jumps basins), and that a linear penalty on a missed window gives a search no gradient (use deficit terms). If they are wanted durable, promote a cleaned copy into `docs/design/evidence/` in a commit of its own; do not commit `.tmp/` as-is.
+
 **Calibration commitments (ER-04 must demonstrate via golden traces):**
 1. Baseline pond (no disruption) holds all stocks within ±10 of initial values for 60 ticks (no drift-collapse).
 2. Canonical runoff (nutrients → 85 over 10 ticks) yields: algae ≥ 75 by ~day 12–18; clarity < 30 by ~day 15–25; DO < 5.0 between days 18–30; mayflies < 20 by ~day 30–40; bluegill visibly strained by ~day 35–50 — direction, ordering, and approximate windows only, not exact curves.
