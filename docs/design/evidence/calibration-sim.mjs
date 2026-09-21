@@ -40,11 +40,11 @@
 
 import { pathToFileURL } from "node:url";
 
-export const SIM_MODEL_VERSION = "pond-crisis-1.2";
-export const PARAM_SET_VERSION = "pc1-params-1.2";
+export const SIM_MODEL_VERSION = "pond-crisis-1.3";
+export const PARAM_SET_VERSION = "pc1-params-1.3";
 
 // ---------------------------------------------------------------------------
-// Parameters — provisional set `pc1-params-1.2` (must match SCIENCE_MODEL §9 exactly).
+// Parameters — provisional set `pc1-params-1.3` (must match SCIENCE_MODEL §9 exactly).
 // STATUS: the STRUCTURE below is frozen (GAME-317 decision (d), see SCIENCE_MODEL §9.1); the
 // VALUES are the best the calibration search has reached and do NOT yet satisfy every §11 window.
 // The harness is expected to report failures — read the summary line, not the exit code, and see
@@ -57,53 +57,56 @@ export const P = {
   nutrientHalfSaturation: 28,   // R-01 pool level at half the growth rate (the supply factor)
   bloomCrashThreshold: 70,      // R-01b density reading only — retired by the frozen reading
   bloomCrashRate: 2.00,         // R-01b share of the growth shortfall shed per tick (range top)
-  algaeSenescence: 0.028,       // R-04 fraction of algae -> detritus /tick
+  algaeSenescence: 0.015,       // R-04 fraction of algae -> detritus /tick
   weedGrowthRate: 0.20,         // R-02
   weedK: 85,                    // R-02 weed carrying capacity
-  weedSenescence: 0.050,        // R-04
+  weedSenescence: 0.008,        // R-04
   shadingCoefficient: 0.95,     // R-03 clarity loss per algae index point
   // consumers (R-10/R-11: per-link removal is directly parameterized)
-  halfSaturation: 28,           // R-10 Holling half-saturation, GRAZING (prey index at half intake).
-                                // NOT a free knob: a low value makes the pristine algal equilibrium
-                                // unstable (the logistic's ascending branch has no stable root), which
-                                // drives the undisturbed pond onto a bloom-dominated branch. See F-6.
-  predationHalfSaturation: 56,  // R-10 Holling half-saturation, PREDATION (separate: a predator's
+  // PER-LINK grazing half-saturation (v1.3, finding F-9). A single shared value for all three
+  // grazers makes them ecologically identical — same food, same functional response — and the
+  // model then competes them to exclusion (measured: one grazer survives, the other two reach
+  // zero, taking the grazing that the bloom's die-back needs with them). Differentiating the
+  // affinities gives each species its own equilibrium resource level, which is the smallest
+  // change that can let them coexist on a fluctuating resource.
+  halfSaturation: { flea: 12, mayfly: 30, snail: 20 },
+  predationHalfSaturation: 40,  // R-10 Holling half-saturation, PREDATION (separate: a predator's
                                 // functional response saturates at a different prey density than a
                                 // filter-feeder's, and a single shared value cannot both keep the
                                 // grazers' intake near saturation at bloom density and keep the
                                 // predator from over-taking sparse prey; see EVIDENCE.md)
-  removalRate: { flea: 0.030, mayfly: 0.042, snail: 0.030, bluegill: 0.010, dragonfly: 0.010 },
-  egestionFraction: 0.096,      // R-20 share of removed prey mass egested (not assimilated)
-  maintenance: 0.1372,          // R-12 maintenance respiration as a fraction of assimilated intake
-  carryingCapacity: { flea: 71, mayfly: 61, snail: 65, bluegill: 84, dragonfly: 42 }, // R-12 recruitment cap
+  removalRate: { flea: 0.040, mayfly: 0.040, snail: 0.040, bluegill: 0.020, dragonfly: 0.020 },
+  egestionFraction: 0.050,      // R-20 share of removed prey mass egested (not assimilated)
+  maintenance: 0.100,          // R-12 maintenance respiration as a fraction of assimilated intake
+  carryingCapacity: { flea: 52, mayfly: 45, snail: 48, bluegill: 80, dragonfly: 40 }, // R-12 recruitment cap
   starveBase: 0.02,             // R-41 starvation base mortality (unreachable under R-12's mass
                                 // form — see SCIENCE_MODEL R-41's recorded limitation)
   starveEscalation: 0.5,        // R-41 +50% per tick beyond the 3rd hungry tick
   starveCap: 5,                 // R-41 max multiplier
-  backgroundMortality: 0.006,   // R-12 /tick
+  backgroundMortality: 0.008,   // R-12 /tick
   // detritus / nutrients (closed loop with exports)
-  decompRate: 0.40,             // R-21 fraction of detritus decomposed /tick
-  mineralizationFraction: 0.95, // R-21 share of decomposed matter returned to the nutrient pool
+  decompRate: 0.15,             // R-21 fraction of detritus decomposed /tick
+  mineralizationFraction: 0.30, // R-21 share of decomposed matter returned to the nutrient pool
                                 // (the remainder is buried). NOTE: the return flux is
                                 // mineralizationFraction × decompRate × detritus and is therefore
                                 // proportional to the detritus stock — it grows exactly when the
                                 // canonical chain needs the pool to fall. See F-6.
-  backgroundInflow: 0.344,      // R-30 constant watershed nutrient inflow /tick (settles N at the reference)
-  nutrientSinkRate: 0.0202,     // R-30 fraction of the nutrient EXCESS over the reference settling/denitrifying /tick
-  nutrientReference: 21,        // R-30 sediment-water exchange equilibrium: net settling above it, no net release below
-  exportFraction: 0.070,        // R-20/R-21b share of consumer mortality + egestion leaving the pond
+  backgroundInflow: 1.713,      // R-30 constant watershed nutrient inflow /tick (settles N at the reference)
+  nutrientSinkRate: 0.050,     // R-30 fraction of the nutrient EXCESS over the reference settling/denitrifying /tick
+  nutrientReference: 9,        // R-30 sediment-water exchange equilibrium: net settling above it, no net release below
+  exportFraction: 0.500,        // R-20/R-21b share of consumer mortality + egestion leaving the pond
   // oxygen (R-22/R-23)
   o2Saturation: 9.0,
   reAeration: 0.084,
   reAerationAerated: 0.30,      // §10 aeration intervention value
   o2PerDecomp: 0.040,           // O2 cost per unit of decomposed matter — sets the DO trough depth
                                 // jointly with the detritus FLUX (o2PerDecomp × decomposition)
-  o2PerPhoto: 0.00048,
+  o2PerPhoto: 0.001,
   photoCap: 0.5,
   o2RespirationBasal: 0.100,
   // stress (R-40)
   stressWindow: 2,              // running-average window (ticks)
-  stressMortality: 0.20,        // max per-tick mortality at doAvg <= severe
+  stressMortality: 0.15,        // max per-tick mortality at doAvg <= severe
   thresholds: {                 // onset / severe (mg/L) — R-40's frozen ramp, §6.3
     mayfly:    { onset: 5.5, severe: 3.0 },
     flea:      { onset: 4.0, severe: 2.0 },
@@ -123,15 +126,15 @@ const POP_CAP = 100, SED_CAP = 100, NUT_CAP = 100, DO_CAP = 15;
 const CONSUMER_ORDER = [...CONSUMERS]; // FROZEN evaluation order (SCIENCE_MODEL §6.5)
 
 // ---------------------------------------------------------------------------
-// Canonical spring pond — the undisturbed fixed point of `pc1-params-1.2`, produced by the
-// calibration settle (the watershed inflow is controlled so the nutrient index rests on the
-// reference; the values are written by `.tmp/opt2.mjs` and frozen here). Drift over 60 ticks is
-// ≈ 0.00 on every stock, which satisfies §11-1 in its strict form.
+// Canonical spring pond — the settled fixed point of `pc1-params-1.3`. These are the measured
+// values, including the uncomfortable ones: the mayfly sits at 0.5 because the three grazers are
+// still competed towards exclusion (finding F-9). Freezing the measurement as it is, rather than a
+// prettier number the rules do not produce, is the point of this file.
 // ---------------------------------------------------------------------------
 export const CANONICAL_INITIAL = Object.freeze({
-  nutrients: 21.0, algae: 53.0, weeds: 49.4,
-  flea: 30.1, mayfly: 21.7, snail: 27.0, bluegill: 16.3, dragonfly: 8.1,
-  sediment: 14.0, do: 5.40,
+  nutrients: 9.0, algae: 46.4, weeds: 76.2,
+  flea: 20.9, mayfly: 0.5, snail: 12.5, bluegill: 16.9, dragonfly: 8.5,
+  sediment: 13.7, do: 7.40,
 });
 
 // Canonical disruption: the scenario injects farm-fertilizer + septic runoff during the
@@ -206,10 +209,11 @@ export function setGrowthLimit(mode) {
   growthLimit.mode = mode;
 }
 
-// R-10 functional response. Two half-saturations: filter-feeding grazers (flea/mayfly/snail)
-// saturate on the algal pool, predators (bluegill/dragonfly) on their prey stocks.
+// R-10 functional response. Grazers saturate on the algal pool with a **per-link** half-saturation
+// (F-9: a shared one makes the three grazers ecologically identical and the model excludes two of
+// them); predators saturate on their prey stocks with their own single value (F-3).
 const GRAZER_SET = new Set(["flea", "mayfly", "snail"]);
-const hollG = (x) => x / (P.halfSaturation + x);
+const hollG = (x, sp) => x / (P.halfSaturation[sp] + x);
 const hollP = (x) => x / (P.predationHalfSaturation + x);
 
 // ---------------------------------------------------------------------------
@@ -309,8 +313,8 @@ export function step(state, cfg = {}) {
   const link = (path) => path.reduce((a, k) => a[k], f);
   f.removed = { flea: 0, mayfly: 0, snail: 0, bluegill: 0, dragonfly: 0 };
   const graze = (pred, preyKey) => {
-    const h = GRAZER_SET.has(pred) ? hollG : hollP;
-    const take = Math.min(P.removalRate[pred] * h(S[preyKey]) * S[pred], prey[preyKey]);
+    const h = GRAZER_SET.has(pred) ? hollG(S[preyKey], pred) : hollP(S[preyKey]);
+    const take = Math.min(P.removalRate[pred] * h * S[pred], prey[preyKey]);
     prey[preyKey] -= take;
     f.removed[pred] += take;
     return take;
@@ -680,20 +684,31 @@ let canonicalHist;
   const baseline = fingerprint(canonicalHist);
   const skipped = new Set(["maxAlgae", "stressWindow", "noisePct"]);
   const offenders = [];
+  // Nested numeric parameters are probed too. They used to be skipped entirely (only top-level
+  // scalars were scaled), which left removalRate, carryingCapacity, halfSaturation, thresholds and
+  // o2Saturation outside the test whose whole purpose is to catch knife-edge gameplay.
+  const targets = [];
   for (const key of Object.keys(P)) {
-    if (skipped.has(key) || typeof P[key] !== "number") continue;
-    for (const scale of [0.9, 1.1]) {
-      const saved = P[key];
-      P[key] = saved * scale;
-      try {
-        if (fingerprint(run(60, { runoff: canonicalRunoff })) !== baseline) {
-          offenders.push(`${key}×${scale}`);
-        }
-      } finally { P[key] = saved; }
+    if (skipped.has(key)) continue;
+    if (typeof P[key] === "number") targets.push({ path: [key], get: () => P[key], set: (v) => { P[key] = v; } });
+    else if (P[key] && typeof P[key] === "object") {
+      for (const sub of Object.keys(P[key])) {
+        if (typeof P[key][sub] !== "number") continue;
+        targets.push({ path: [key, sub], get: () => P[key][sub], set: (v) => { P[key][sub] = v; } });
+      }
     }
   }
-  console.log(`\n== S2 no-threshold flip (±10% single-parameter) ==\n  baseline fingerprint ${baseline}; offenders: ${offenders.join(", ") || "none"}`);
-  check(offenders.length === 0, `no ±10% single-parameter perturbation flips the canonical outcome (${offenders.length} of ${(Object.keys(P).filter((k) => typeof P[k] === "number" && !skipped.has(k)).length * 2)} variants)`);
+  for (const t of targets) {
+    for (const scale of [0.9, 1.1]) {
+      const saved = t.get();
+      t.set(saved * scale);
+      try {
+        if (fingerprint(run(60, { runoff: canonicalRunoff })) !== baseline) offenders.push(`${t.path.join(".")}×${scale}`);
+      } finally { t.set(saved); }
+    }
+  }
+  console.log(`\n== S2 no-threshold flip (±10% single-parameter) ==\n  baseline fingerprint ${baseline}; ${targets.length * 2} variants probed; offenders: ${offenders.join(", ") || "none"}`);
+  check(offenders.length === 0, `no ±10% single-parameter perturbation flips the canonical outcome (${offenders.length} of ${targets.length * 2} variants)`);
 }
 
 // ---------------------------------------------------------------------------
