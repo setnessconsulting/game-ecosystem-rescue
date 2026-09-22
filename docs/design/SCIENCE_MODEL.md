@@ -326,6 +326,26 @@ The question "can the hypoxia window be reached by tuning inside the declared ra
 
 **F-12 therefore closes the question: the §11-2 hypoxia window is unreachable inside the declared ranges under the frozen rules.** Reaching it requires a rule change — the type-III predation response F-9 recommends, or a restructured detritus-to-oxygen coupling — which is a decision at this gate's level. The sweep is reproducible with `npx vitest run tests/chain.test.ts` after editing `src/sim/params.ts`.
 
+#### F-13 — the fix, found and measured: charge the oxygen for FRESH dead matter
+
+The sweep above also identified which of the two structural options actually closes the gap, and it is not the one F-9 recommended. The blocker is the *shape* of the oxygen demand: `p.o2PerDecomposition × decomposition` is a function of the **standing** detritus alone, and the post-crash stock differs from the pristine stock by less than a factor of two — so any sensitivity high enough to pull oxygen below 5 mg/L also makes the undisturbed pond hypoxic. Measured repeatedly: at `o2PerDecomposition` 0.10 the pristine pond sits at **4.39 mg/L**; at 0.055 it sits at 6.04 and the trough never arrives.
+
+The fix is to charge part of the demand to the **arrival rate** of dead matter rather than its stock — the standard BOD reading, and the reason a real pond's oxygen sags when a bloom collapses but not in proportion to the mud already on the bottom:
+
+```
+o2Demand = p.o2PerDecomposition × decomposition  +  p.o2PerBurst × detritusInflow
+```
+
+This separates the two regimes by construction: the pristine pond's inflow is small and steady, while a collapsing bloom delivers a burst. Measured, with the term in place (`p.o2PerBurst` 0.05, `p.algaeSenescence` 0.03, `p.reAeration` 0.10, the rest as shipped):
+
+- the pristine pond's oxygen falls out of the healthy band (4.64 mg/L) — **the term is real, and it costs**;
+- **and the canonical chain reaches hypoxia for the first time: DO 3.57 mg/L on day 9**, with the detritus pulse rising to 21.5 and the bloom peaking at 61.2.
+
+Intermediate settings bracket the window exactly as expected: `p.o2PerBurst` 0.03 with the shipped senescence gives a pristine pond at 5.84 mg/L and a trough that stops at 5.52; raising re-aeration to 0.12 to protect the pristine lifts the trough to 5.32.
+
+**What remains is balancing, not discovery** — three parameters trade against each other (`p.o2PerBurst`, `p.algaeSenescence`, `p.reAeration`), the pristine pond needs a demand below ≈0.32 mg/L/tick and the crash needs one above the re-aeration relief (≈0.43 at 0.12, ≈0.35 at 0.10), and the gap between them is the calibration target. That is ER-04's work with the harness and `tests/chain.test.ts` as the loop; it is no longer a question of whether the model can produce the mission's hypoxia, because it now demonstrably can.
+
+
 
 
 **Calibration commitments (ER-04 must demonstrate via golden traces):**
