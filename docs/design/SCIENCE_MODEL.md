@@ -307,6 +307,26 @@ The first pass diagnosed the wrong blocker. F-6 said the DO trough is bounded by
 
 **What this pass changed materially:** the pristine pond *can* be healthy at a low re-aeration (F-10), and the canonical bloom and clarity windows *can* be hit (measured: bloom 80.1 on day 16, clarity < 30 on day 15, both inside their §11 windows, pool peaking at 90.7 without pinning). What still fails is downstream of the crash: the die-back is too slow (F-8) because the grazer community collapses (F-9). Those two are the same problem seen from two ends, and **F-9 is a rule-structure question that a design-freeze gate should answer rather than a search should paper over.**
 
+#### Third pass — a parameter sweep, and what it proves (F-12)
+
+The question "can the hypoxia window be reached by tuning inside the declared ranges?" now has a direct experimental answer rather than an argument. Twelve configurations were run through the **kernel's own integer arithmetic** (the game's code, not the floating-point harness), each re-settled from scratch and then driven through the canonical disruption, with the chain measured by `tests/chain.test.ts`:
+
+| Configuration (every value inside its declared range) | Pristine DO | Bloom peak | Clarity min | Detritus peak | DO min | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| Shipped: rr 0.035, K 171/147/157, rea 0.10, basal 0.05, exp 0.15, Nref 23 | 6.72 | 56.5 | 46 | 20.6 | 6.58 | healthy pond, no trough |
+| Grazing halved and basal at the range top | 7.03 | 80.2 | 24 | — | — | **the pristine pond is already a bloom** |
+| Lower reference pool (Nref 13) with higher grazing | 6.12 | 64.9 | 38 | 19.2 | 6.02 | neither end satisfied |
+| Export 0.50 + rea 0.07 + crash rate 2.0 | 5.99 | 64.1 | 39 | 15.6 | 5.78 | a marginal pond and a marginal trough |
+| Bigger pulse (14/tick) with a stronger sink (0.10) | 6.52 | 63.3 | 40 | 18.7 | 6.38 | no trough |
+| Smaller grazer community (K 88/76/81) | 6.96 | 78.5 | **25** | 15.7 | 6.91 | bloom *and* clarity windows land; still no trough |
+| …plus viable predators (rr_P 0.02) | 7.31 | 84.5 on day 0 | 20 on day 0 | 12.8 | 7.29 | **the pristine pond is already the bloom** |
+| Re-aeration at the range bottom (0.05) with export 0.50 | **5.43** | — | — | — | — | the pristine pond is hypoxic and the predators go extinct |
+
+**The finding.** Every configuration that produces an oxygen trough does so by making the *pristine* pond unhealthy, and every configuration that keeps the pristine pond healthy produces no trough. The reason is arithmetic, not tuning: the oxygen demand is `p.o2PerDecomposition × decomposition`, the trough requires that demand to exceed re-aeration's relief at 5 mg/L, and with `p.o2PerDecomposition` already at its range top the demand cannot reach that relief without a detritus flux roughly twice anything the model produces — and the detritus flux is bounded by the bloom's own loss rate (`senescence·A + grazing`), because the die-back `(1 + p.bloomCrashRate) × shortfall` can never exceed a multiple of the very losses it is derived from.
+
+**F-12 therefore closes the question: the §11-2 hypoxia window is unreachable inside the declared ranges under the frozen rules.** Reaching it requires a rule change — the type-III predation response F-9 recommends, or a restructured detritus-to-oxygen coupling — which is a decision at this gate's level. The sweep is reproducible with `npx vitest run tests/chain.test.ts` after editing `src/sim/params.ts`.
+
+
 
 **Calibration commitments (ER-04 must demonstrate via golden traces):**
 1. Baseline pond (no disruption) holds all stocks within ±10 of initial values for 60 ticks (no drift-collapse).

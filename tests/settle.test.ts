@@ -30,21 +30,21 @@ const read = (s: EcosystemState): Record<string, number> => ({
 
 describe("pristine pond settle (kernel arithmetic)", () => {
   it("stays at the frozen fixed point, and reports the state a fresh settle reaches", () => {
+    // A fresh settle from the frozen state, first, so the values can be pasted back when the
+    // parameters are re-tuned — that is the whole point of this file.
+    let s = initialState();
+    for (let i = 0; i < 20; i++) s = run(500, QUIET)[500]!.state;
+    const settled = read(s);
+    console.log("\n=== CANONICAL_INITIAL (kernel-settled) ===");
+    for (const k of [...FEATURES, "do"]) console.log(`  ${k}: s(${settled[k]!.toFixed(3)}),`);
+
     // Stationarity of the FROZEN state: §11-1 in its strict form. The threshold is not zero because
     // R-50 puts ±2% noise on births, so a living community wanders a few index points — what must
     // not happen is a trend, and a trend shows up as a drift far larger than this.
     const first = read(initialState());
     const after = read(run(60, QUIET)[60]!.state);
     const frozenDrift = Object.keys(first).map((k) => ({ k, d: Math.abs(after[k]! - first[k]!) })).sort((a, b) => b.d - a.d);
-    console.log("\nfrozen-state 60-tick drift:", frozenDrift.slice(0, 5).map((x) => `${x.k} ${x.d.toFixed(2)}`).join(", "));
+    console.log("frozen-state 60-tick drift:", frozenDrift.slice(0, 5).map((x) => `${x.k} ${x.d.toFixed(2)}`).join(", "));
     expect(frozenDrift[0]!.d, `the frozen state drifts (${frozenDrift[0]!.k})`).toBeLessThan(12);
-
-    // A fresh settle from the frozen state, so the reported values can be pasted back if the
-    // parameters are ever re-tuned.
-    let s = initialState();
-    for (let i = 0; i < 20; i++) s = run(500, QUIET)[500]!.state;
-    const settled = read(s);
-    console.log("\n=== CANONICAL_INITIAL (kernel-settled) ===");
-    for (const k of [...FEATURES, "do"]) console.log(`  ${k}: s(${settled[k]!.toFixed(3)}),`);
   }, 180_000);
 });
