@@ -6,6 +6,7 @@
 // not in `EcosystemState` or the flow ledger, the UI does not invent it (§D-4 ownership rules).
 import { useMemo, useState } from "react";
 import {
+  CANONICAL_INITIAL,
   DO_SCALE,
   PARAM_SET_VERSION,
   SCALE,
@@ -21,7 +22,7 @@ import {
   type TickResult,
 } from "@/sim/index.js";
 import { Chart } from "./Chart.js";
-import { bandWord, describe, stressNote } from "./presentation.js";
+import { bandWord, describe, speciesBandWord, stressNote } from "./presentation.js";
 
 const canonical: Scenario = { runoffAt: (t) => (t < 10 ? 9 * SCALE : 0) };
 
@@ -114,13 +115,14 @@ export default function App() {
         <ul className="organisms" data-testid="organisms">
           {ORGANISMS.map(({ key, label, role, threshold }) => {
             const value = state.consumers[key] / SCALE;
+            const pristine = CANONICAL_INITIAL[key] / SCALE;
             const stressed = doValue < threshold;
             return (
               <li key={key} data-organism={key} className={stressed ? "stressed" : undefined}>
                 <span className="name">{label}</span>
                 <span className="role">{role}</span>
                 <span className="value">
-                  {value.toFixed(0)} <span className="note">{bandWord(value)}</span>
+                  {value.toFixed(0)} <span className="note">{speciesBandWord(value, pristine)}</span>
                 </span>
                 {stressed ? <span className="flag">needs oxygen above {threshold.toFixed(1)} mg/L</span> : null}
               </li>

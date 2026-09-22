@@ -11,6 +11,23 @@ export function bandWord(index: number): string {
   return "crashing";
 }
 
+/**
+ * A species' band word, judged against its OWN undisturbed density rather than the raw 0-100 scale.
+ *
+ * §3 defines relative abundance as "density relative to the scenario's pristine pond", so a bluegill
+ * index of 7 on an undisturbed pond is its normal level, not a collapse — and a band word read off
+ * the absolute scale would tell a learner that a healthy fish population is crashing, which is the
+ * kind of false signal §8 exists to prevent. The comparison is a ratio to the pristine value.
+ */
+export function speciesBandWord(value: number, pristine: number): string {
+  if (pristine <= 0) return bandWord(value);
+  const ratio = value / pristine;
+  if (ratio >= 0.9) return "near its usual level";
+  if (ratio >= 0.6) return "a little below usual";
+  if (ratio >= 0.3) return "well below usual";
+  return "far below usual";
+}
+
 /** S4/S7: 5 mg/L is the published stress line for warm-water life; say it in those terms. */
 export function stressNote(dissolvedOxygen: number): string {
   if (dissolvedOxygen < 2.5) return "severe — fish gulp at the surface";
