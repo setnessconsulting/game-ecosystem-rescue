@@ -106,11 +106,54 @@ export function clarityOf(algae: number): number {
 const zeroStocks = (): ConsumerStocks => ({ flea: 0, mayfly: 0, snail: 0, bluegill: 0, dragonfly: 0 });
 
 /**
+ * Fail-closed input validation (TECHNICAL_DESIGN §D-2: "NaN/∞ rejected", "no silent repair").
+ *
+ * The scenario and any state handed to the kernel are data like any other: a NaN, an infinity or a
+ * fractional fixed-point value would ride the ordinary arithmetic into the authoritative stocks and
+ * poison every later tick (and break R-51's integers-only rule), so it is rejected at the boundary
+ * instead of being clamped away. Bounds are deliberately NOT re-checked here: clamping at the end
+ * of the tick is R-52's mechanism, and cap behaviour at the boundary (spill/reject rather than
+ * clamp) is the recorded F-5 / ER-03 work.
+ */
+function assertValidInputs(state: EcosystemState, scenarioRunoff: number, backgroundInflow: number): void {
+  if (!Number.isFinite(scenarioRunoff) || !Number.isInteger(scenarioRunoff)) {
+    throw new Error(`scenario runoffAt(${state.tick}) must return a finite integer (fixed point), received ${scenarioRunoff}`);
+  }
+  if (!Number.isFinite(backgroundInflow) || !Number.isInteger(backgroundInflow)) {
+    throw new Error(`scenario backgroundInflow must be a finite integer (fixed point), received ${backgroundInflow}`);
+  }
+  if (state.doHistory.length === 0) {
+    throw new Error("state.doHistory must not be empty; the R-40 stress average would be undefined (TECHNICAL_DESIGN §D-2)");
+  }
+  const stocks: readonly (readonly [string, number])[] = [
+    ["tick", state.tick],
+    ["nutrients", state.nutrients],
+    ["algae", state.algae],
+    ["weeds", state.weeds],
+    ["detritus", state.detritus],
+    ["do", state.do],
+    ["clarity", state.clarity],
+    ["rngSeed", state.rngSeed],
+    ...CONSUMER_ORDER.map((k): readonly [string, number] => [`consumers.${k}`, state.consumers[k]]),
+    ...CONSUMER_ORDER.map((k): readonly [string, number] => [`hungry.${k}`, state.hungry[k]]),
+    ...state.doHistory.map((v, i): readonly [string, number] => [`doHistory[${i}]`, v]),
+  ];
+  for (const [name, value] of stocks) {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      throw new Error(`state.${name} must be a finite integer (fixed point), received ${value} (TECHNICAL_DESIGN §D-2)`);
+    }
+  }
+}
+
+/**
  * One tick, in the frozen order (§6.5): the snapshot is read, every flow is computed from it, and
  * the new state is written once.
  */
 export function tick(state: EcosystemState, sc: Scenario = canonicalScenario): TickResult {
   const s = state;
+  const scenarioRunoff = sc.runoffAt(s.tick);
+  const backgroundInflow = sc.backgroundInflow ?? cycling.backgroundInflow;
+  assertValidInputs(s, scenarioRunoff, backgroundInflow);
   const events: SimEvent[] = [];
   const stock = s.consumers;
 
@@ -191,6 +234,9 @@ export function tick(state: EcosystemState, sc: Scenario = canonicalScenario): T
   const deaths = zeroStocks();
   const starve = zeroStocks();
   const stress = zeroStocks();
+  // R-41's counters are state: they are copied into a fresh record like every other stock, never
+  // written in place, so the input state stays untouched (TECHNICAL_DESIGN §D-2, replayability).
+  const nextHungry = zeroStocks();
   let respiredTotal = 0;
   let shedTotal = 0;
   let egestionTotal = 0;
@@ -211,8 +257,8 @@ export function tick(state: EcosystemState, sc: Scenario = canonicalScenario): T
 
     // R-41 food limitation: consecutive ticks where what the species assimilates cannot cover its
     // own maintenance.
-    if (assimilated < respired) s.hungry[sp] += 1;
-    else s.hungry[sp] = 0;
+    if (assimilated < respired) nextHungry[sp] = s.hungry[sp] + 1;
+    else nextHungry[sp] = 0;
     if (s.hungry[sp] >= 3) {
       const mult = Math.min(consumers.starveCap, 1 + consumers.starveEscalation * (s.hungry[sp] - 3));
       starve[sp] = mul(mul(consumers.starveBase, mult), stock[sp]);
@@ -239,10 +285,10 @@ export function tick(state: EcosystemState, sc: Scenario = canonicalScenario): T
   const buried = decomposition - mineralized;
 
   // -- R-30 the pool: scenario runoff + the watershed supply, minus uptake and the excess sink
-  let runoff = sc.runoffAt(s.tick);
+  let runoff = scenarioRunoff;
   if (s.flags.runoffDiverted) runoff = 0;
   if (s.flags.bufferStrip) runoff = mul(runoff, BUFFER_STRIP_REMAINING);
-  const inflow = runoff + (sc.backgroundInflow ?? cycling.backgroundInflow);
+  const inflow = runoff + backgroundInflow;
   const nutrientSinkLoss = mul(cycling.nutrientSinkRate, Math.max(0, s.nutrients - cycling.nutrientReference));
 
   // -- R-22/R-23 oxygen: photosynthesis in, decomposition + basal respiration out, re-aeration
@@ -271,7 +317,7 @@ export function tick(state: EcosystemState, sc: Scenario = canonicalScenario): T
     algae,
     weeds,
     consumers: nextConsumers,
-    hungry: s.hungry,
+    hungry: nextHungry,
     detritus,
     do: doNext,
     clarity: clarityOf(algae),
