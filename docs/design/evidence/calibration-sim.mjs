@@ -211,10 +211,25 @@ export function setGrowthLimit(mode) {
 
 // R-10 functional response. Grazers saturate on the algal pool with a **per-link** half-saturation
 // (F-9: a shared one makes the three grazers ecologically identical and the model excludes two of
-// them); predators saturate on their prey stocks with their own single value (F-3).
+// them); predators saturate on their prey stocks.
+//
+// The predation form is selectable because F-9's coexistence problem is not a parameter problem. A
+// Holling-II per-capita predation rate DECREASES with prey abundance, so it amplifies whichever
+// grazer is already winning instead of killing it. `type3` is the sigmoidal alternative, where
+// per-capita mortality RISES with prey density in the mid-range — the classic kill-the-winner
+// mechanism, and the one that can hold three consumers on a single resource at equilibrium.
+export const PREDATION_MODES = ["holling2", "type3"];
+export const predationMode = { mode: "holling2" };
+export function setPredationMode(mode) {
+  if (!PREDATION_MODES.includes(mode)) throw new Error(`unknown predation mode ${mode}`);
+  predationMode.mode = mode;
+}
 const GRAZER_SET = new Set(["flea", "mayfly", "snail"]);
 const hollG = (x, sp) => x / (P.halfSaturation[sp] + x);
-const hollP = (x) => x / (P.predationHalfSaturation + x);
+const hollP = (x) => {
+  const k = P.predationHalfSaturation;
+  return predationMode.mode === "type3" ? (x * x) / (k * k + x * x) : x / (k + x);
+};
 
 // ---------------------------------------------------------------------------
 // State

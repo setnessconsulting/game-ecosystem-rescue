@@ -14,6 +14,7 @@ import {
   run,
   step,
   tick,
+  type ConsumerKey,
   type EcosystemState,
   type InterventionId,
   type Scenario,
@@ -22,7 +23,16 @@ import {
 import { Chart } from "./Chart.js";
 import { bandWord, describe, stressNote } from "./presentation.js";
 
-const canonical: Scenario = { runoffAt: (t) => (t < 10 ? 10 * SCALE : 0) };
+const canonical: Scenario = { runoffAt: (t) => (t < 10 ? 9 * SCALE : 0) };
+
+/** The organism roster (§4) with the DO each one starts to suffer at (R-40's onsets). */
+const ORGANISMS: { key: ConsumerKey; label: string; role: string; threshold: number }[] = [
+  { key: "flea", label: "Water fleas", role: "filter-feeding grazer", threshold: 4.0 },
+  { key: "mayfly", label: "Mayflies", role: "sensitive scraper — first to suffer", threshold: 5.5 },
+  { key: "snail", label: "Snails", role: "tolerant grazer", threshold: 2.0 },
+  { key: "bluegill", label: "Bluegill", role: "fish, eats the grazers", threshold: 5.0 },
+  { key: "dragonfly", label: "Dragonfly nymphs", role: "invertebrate predator", threshold: 4.0 },
+];
 
 export default function App() {
   // Day 0 is the pristine pond: the player has not advanced anything yet.
@@ -95,6 +105,28 @@ export default function App() {
           </div>
         </dl>
         <p className="prose">{describe(state)}</p>
+
+        <h3>Who is in the pond</h3>
+        <p className="note">
+          Each value is a relative abundance against the pond&apos;s own undisturbed state. The band word is the
+          judgement; the number is the index behind it.
+        </p>
+        <ul className="organisms" data-testid="organisms">
+          {ORGANISMS.map(({ key, label, role, threshold }) => {
+            const value = state.consumers[key] / SCALE;
+            const stressed = doValue < threshold;
+            return (
+              <li key={key} data-organism={key} className={stressed ? "stressed" : undefined}>
+                <span className="name">{label}</span>
+                <span className="role">{role}</span>
+                <span className="value">
+                  {value.toFixed(0)} <span className="note">{bandWord(value)}</span>
+                </span>
+                {stressed ? <span className="flag">needs oxygen above {threshold.toFixed(1)} mg/L</span> : null}
+              </li>
+            );
+          })}
+        </ul>
       </section>
 
       <section aria-labelledby="controls-heading">
@@ -114,6 +146,12 @@ export default function App() {
           </button>
           <button type="button" onClick={() => intervene("aeration")}>
             Aerate the pond
+          </button>
+          <button type="button" onClick={() => intervene("grazer-boost")}>
+            Add water fleas
+          </button>
+          <button type="button" onClick={() => intervene("bluegill-removal")}>
+            Move some bluegill
           </button>
         </div>
         <ul className="flags">

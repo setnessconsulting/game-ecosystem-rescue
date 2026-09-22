@@ -4,23 +4,35 @@
 // serialized, hashed and replayed exactly. A trace is a list of these plus the actions that made
 // them, which is what makes the evidence layer auditable after the fact.
 import type { SCALE, DO_SCALE } from "./fixed.js";
+import type { ConsumerKey } from "./params.js";
 
-/** Every authoritative stock. Values are integers: indices × SCALE, DO × DO_SCALE. */
+/** The stocks every consumer carries: its abundance, hunger counter and stress flag. */
+export type ConsumerStocks = Record<ConsumerKey, number>;
+export type ConsumerCounters = Record<ConsumerKey, number>;
+
+/** Every authoritative stock. Values are integers: indices × SCALE, DO × SCALE. */
 export type EcosystemState = {
   readonly tick: number;
   /** R-30 dissolved nutrient pool (index × SCALE). */
   readonly nutrients: number;
   /** R-01 bloom-forming algae (index × SCALE). */
   readonly algae: number;
+  /** R-02 rooted waterweeds (index × SCALE). */
+  readonly weeds: number;
+  /** R-10/R-11/R-12 the five consumer species (index × SCALE each). */
+  readonly consumers: ConsumerStocks;
+  /** R-41 consecutive hungry ticks per consumer (internal bookkeeping, not learner-visible). */
+  readonly hungry: ConsumerCounters;
   /** R-20 detritus (index × SCALE) — internal, not learner-visible in v1. */
   readonly detritus: number;
-  /** R-23 dissolved oxygen, mg/L × DO_SCALE. */
+  /** R-23 dissolved oxygen, mg/L × SCALE. */
   readonly do: number;
   /** R-03 derived clarity, 0–100 index × SCALE. Derived, carried for the trace and the UI. */
   readonly clarity: number;
-  /** R-40 2-tick DO running average, mg/L × DO_SCALE. Derived, carried for the same reason. */
-  readonly doAverage: number;
+  /** R-40 running DO history; its 2-tick mean drives the stress term. */
   readonly doHistory: readonly number[];
+  /** R-01b whether the bloom is currently shedding, so the onset event fires once. */
+  readonly crashActive: boolean;
   /**
    * R-31 intervention flags. They live in the state, not the scenario, so a replay is
    * self-contained: (scenarioId, seed, actions) must be enough to reproduce a trace exactly.
@@ -36,6 +48,7 @@ export type EcosystemState = {
 export type SimEvent = {
   readonly rule: string;
   readonly kind: string;
+  readonly organism?: string;
   readonly value: number;
 };
 
@@ -46,6 +59,21 @@ export type FlowLedger = {
   readonly algaeGrowth: number;
   readonly algaeDieback: number;
   readonly algaeSenescence: number;
+  readonly weedGrowth: number;
+  readonly weedSenescence: number;
+  readonly grazedAlgae: number;
+  readonly removed: ConsumerStocks;
+  readonly predation: ConsumerStocks;
+  readonly births: ConsumerStocks;
+  readonly deaths: ConsumerStocks;
+  readonly starve: ConsumerStocks;
+  readonly stress: ConsumerStocks;
+  readonly respired: number;
+  readonly shed: number;
+  readonly egestion: number;
+  readonly deadMass: number;
+  readonly exportLoss: number;
+  readonly detritusInflow: number;
   readonly decomposition: number;
   readonly mineralized: number;
   readonly buried: number;
@@ -68,8 +96,13 @@ export type SimAction =
   | { readonly kind: "applyIntervention"; readonly id: InterventionId }
   | { readonly kind: "noop" };
 
-/** The frozen v1 intervention vocabulary (SCIENCE_MODEL §10). */
-export type InterventionId = "divert-runoff" | "buffer-strip" | "aeration";
+/** The v1 intervention vocabulary (SCIENCE_MODEL §10). */
+export type InterventionId =
+  | "divert-runoff"
+  | "buffer-strip"
+  | "aeration"
+  | "grazer-boost"
+  | "bluegill-removal";
 
 /** Scenario-owned flags that interventions flip (R-31). */
 export type ScenarioFlags = {
@@ -78,4 +111,4 @@ export type ScenarioFlags = {
   readonly aerated: boolean;
 };
 
-export type { SCALE, DO_SCALE };
+export type { SCALE, DO_SCALE, ConsumerKey };

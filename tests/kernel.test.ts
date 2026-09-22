@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CANONICAL_INITIAL,
+  CONSUMER_ORDER,
   DO_SCALE,
   SCALE,
   canonicalScenario,
@@ -69,8 +70,33 @@ describe("matter loop identity (§5, the MS-LS2-3 anchor)", () => {
   });
 });
 
-describe("rule directions (SCIENCE_MODEL §11 sanity tests, core slice)", () => {
-  it("raises the pool and then the bloom when runoff arrives", () => {
+describe("the pond community (§4, §11-1)", () => {
+  it("keeps all seven organism groups alive on an undisturbed pond", () => {
+    const trace = run(60, quiet);
+    for (const species of CONSUMER_ORDER) {
+      const final = trace[trace.length - 1]!.state.consumers[species] / SCALE;
+      expect(final, `${species} did not survive sixty undisturbed ticks`).toBeGreaterThan(1);
+    }
+    const finalAlgae = trace[trace.length - 1]!.state.algae / SCALE;
+    const finalWeeds = trace[trace.length - 1]!.state.weeds / SCALE;
+    expect(finalAlgae).toBeGreaterThan(1);
+    expect(finalWeeds).toBeGreaterThan(1);
+  });
+
+  it("keeps the undisturbed pond near its own starting state (no drift-collapse)", () => {
+    const trace = run(60, quiet);
+    const first = trace[0]!.state;
+    const last = trace[trace.length - 1]!.state;
+    for (const k of ["nutrients", "algae", "weeds", "detritus"] as const) {
+      expect(Math.abs(last[k] - first[k]) / SCALE, `${k} drifted`).toBeLessThan(12);
+    }
+    for (const species of CONSUMER_ORDER) {
+      const drift = Math.abs(last.consumers[species] - first.consumers[species]) / SCALE;
+      expect(drift, `${species} drifted`).toBeLessThan(20);
+    }
+  });
+
+  it("gives the bloom a cause: runoff raises the pool, then the algae", () => {
     const trace = run(30, canonicalScenario);
     const peakNutrients = Math.max(...trace.map((t) => t.state.nutrients)) / SCALE;
     const peakAlgae = Math.max(...trace.map((t) => t.state.algae)) / SCALE;
@@ -78,13 +104,18 @@ describe("rule directions (SCIENCE_MODEL §11 sanity tests, core slice)", () => 
     expect(peakAlgae).toBeGreaterThan(CANONICAL_INITIAL.algae / SCALE);
   });
 
-  it("loses clarity as the bloom grows (R-03)", () => {
-    const trace = run(30, canonicalScenario);
-    const first = trace[0]!.state.clarity;
-    const darkest = Math.min(...trace.map((t) => t.state.clarity));
-    expect(darkest).toBeLessThan(first);
+  it("shows the chain's direction: a bloom costs clarity and the waterweeds", () => {
+    const trace = run(40, canonicalScenario);
+    const clarityStart = trace[0]!.state.clarity;
+    const weedsStart = trace[0]!.state.weeds;
+    const clarityWorst = Math.min(...trace.map((t) => t.state.clarity));
+    const weedsWorst = Math.min(...trace.map((t) => t.state.weeds));
+    expect(clarityWorst).toBeLessThan(clarityStart);
+    expect(weedsWorst).toBeLessThanOrEqual(weedsStart);
   });
+});
 
+describe("interventions and failure handling (§10, §D-2)", () => {
   it("cuts runoff to zero when it is diverted (R-31)", () => {
     const divertedState = step(initialState(), { kind: "applyIntervention", id: "divert-runoff" });
     const r = tick(divertedState, canonicalScenario);
@@ -98,6 +129,17 @@ describe("rule directions (SCIENCE_MODEL §11 sanity tests, core slice)", () => 
     const rd = tick(diverted, canonicalScenario).flows.runoff;
     expect(rd).toBe(0);
     expect(rb).toBeGreaterThan(0);
+  });
+
+  it("adds water fleas and halves the bluegill when those interventions are used (R-31)", () => {
+    const before = initialState();
+    const boosted = step(before, { kind: "applyIntervention", id: "grazer-boost" });
+    expect(boosted.consumers.flea).toBeGreaterThan(before.consumers.flea);
+    expect(tick(boosted, quiet).flows.removed.flea).toBeGreaterThan(tick(before, quiet).flows.removed.flea);
+
+    const removed = step(before, { kind: "applyIntervention", id: "bluegill-removal" });
+    expect(removed.consumers.bluegill).toBeLessThan(before.consumers.bluegill);
+    expect(tick(removed, quiet).flows.predation.flea).toBeLessThan(tick(before, quiet).flows.predation.flea);
   });
 
   it("rejects an out-of-range advance and an unknown action (fail-closed)", () => {

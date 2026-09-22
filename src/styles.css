@@ -154,6 +154,60 @@ tbody th {
   text-align: left;
 }
 
+.organisms {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.organisms li {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 1.4fr) auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  background: #fff;
+}
+
+.organisms li.stressed {
+  border-color: #c98a2a;
+  background: #fffaf0;
+}
+
+.organisms .name {
+  font-weight: 600;
+}
+
+.organisms .role {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.organisms .value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.organisms .flag {
+  grid-column: 1 / -1;
+  color: #8a5a12;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 400px) {
+  .organisms li {
+    grid-template-columns: 1fr auto;
+  }
+
+  .organisms .role {
+    grid-column: 1 / -1;
+  }
+}
+
 footer {
   border-top: 1px solid var(--line);
   margin-top: 2rem;

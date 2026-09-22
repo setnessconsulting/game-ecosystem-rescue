@@ -24,18 +24,26 @@ export function describe(state: EcosystemState): string {
   const clarity = state.clarity / SCALE;
   const nutrients = state.nutrients / SCALE;
   const doValue = state.do / DO_SCALE;
+  const mayfly = state.consumers.mayfly / SCALE;
+  const flea = state.consumers.flea / SCALE;
 
-  if (nutrients > 60 && algae > 50) {
+  if (nutrients > 55 && algae > 40) {
     return "Fertiliser from the fields has fed the algae. The water is turning green and less light reaches the weeds.";
   }
-  if (clarity < 30) {
+  if (clarity < 35) {
     return "The bloom is thick enough to shade the water. Whatever lives below now sees very little light.";
   }
   if (doValue < 5) {
-    return "Decomposing algae are using up the oxygen. Oxygen below 5 mg/L begins to stress the animals that need the most.";
+    return "Decomposing algae are using up the oxygen. Below 5 mg/L the animals that need the most begin to suffer first.";
+  }
+  if (mayfly < 20) {
+    return "The mayflies have thinned out — they are the first to feel low oxygen, which is why they are watched closely.";
+  }
+  if (flea < 20) {
+    return "The water fleas are scarce, so the algae have one less grazer holding them back.";
   }
   if (algae < 20) {
     return "The water is clear and the algae are sparse — a quiet, low-nutrient pond.";
   }
-  return "The pond is holding steady, with the day's algae growth balanced by what settles and is grazed.";
+  return "The pond is holding steady: the algae grow, the grazers eat, and the day's surplus settles to the bottom.";
 }

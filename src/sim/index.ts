@@ -5,16 +5,20 @@ export {
   SIM_MODEL_VERSION,
   PARAM_SET_VERSION,
   CANONICAL_INITIAL,
+  CONSUMER_ORDER,
   producers,
+  consumers,
   cycling,
   oxygen,
   scenario,
 } from "./params.js";
+export type { ConsumerKey } from "./params.js";
 export { SCALE, DO_SCALE, INDEX_MAX, DO_MAX, mul, div, clamp } from "./fixed.js";
 export { initialState, tick, step, run, loopResidual, clarityOf, canonicalScenario } from "./kernel.js";
 export type { Scenario } from "./kernel.js";
 export type {
   EcosystemState,
+  ConsumerStocks,
   FlowLedger,
   TickResult,
   SimAction,
