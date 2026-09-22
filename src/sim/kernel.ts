@@ -249,7 +249,7 @@ export function tick(state: EcosystemState, sc: Scenario = canonicalScenario): T
   //    relaxing toward saturation with the aerated rate when the intervention is active.
   const reAerationRate = s.flags.aerated ? oxygen.aerationRate : oxygen.reAeration;
   const o2Produced = Math.min(oxygen.photoCap, mul(oxygen.o2PerPhoto, s.algae));
-  const o2Demand = mul(oxygen.o2PerDecomp, decomposition);
+  const o2Demand = mul(oxygen.o2PerDecomp, decomposition) + mul(oxygen.o2PerBurst, detritusInflow);
   const o2Respiration = oxygen.respirationBasal;
   const o2Reaeration = mul(reAerationRate, oxygen.saturation - s.do);
 

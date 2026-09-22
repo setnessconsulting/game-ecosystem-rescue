@@ -10,8 +10,8 @@
 // quantity in the kernel is an integer (R-51).
 import { SCALE, DO_SCALE } from "./fixed.js";
 
-export const SIM_MODEL_VERSION = "pond-crisis-1.3";
-export const PARAM_SET_VERSION = "pc1-params-1.3";
+export const SIM_MODEL_VERSION = "pond-crisis-1.4";
+export const PARAM_SET_VERSION = "pc1-params-1.4";
 
 /** Model units → fixed point, once, at load. */
 const s = (modelUnits: number): number => Math.round(modelUnits * SCALE);
@@ -33,13 +33,13 @@ export const producers = {
   /** R-01b share of the growth shortfall shed per tick. */
   bloomCrashRate: s(1.5),
   /** R-04 fraction of algae to detritus per tick. */
-  algaeSenescence: s(0.013),
+  algaeSenescence: s(0.03),
   /** R-03 clarity loss per algae index point. */
   shadingCoefficient: s(0.95),
   /** R-02 waterweed growth, capacity and senescence. */
   weedGrowthRate: s(0.12),
   weedK: s(85),
-  weedSenescence: s(0.02),
+  weedSenescence: s(0.008),
 } as const;
 
 /** Consumers (R-10, R-11, R-12, R-40, R-41). */
@@ -69,7 +69,7 @@ export const consumers = {
   /** R-12 maintenance respiration as a share of ASSIMILATED intake (F-1). */
   maintenance: s(0.03),
   /** R-12 background mortality per tick. */
-  backgroundMortality: s(0.01),
+  backgroundMortality: s(0.005),
   /** R-41 starvation escalation. */
   starveBase: s(0.02),
   starveEscalation: s(0.5),
@@ -96,9 +96,9 @@ export const cycling = {
   /** R-21 share of decomposed matter returned to the pool; the rest is buried out of the cycle. */
   mineralizationFraction: s(0.9),
   /** R-20 share of consumer mortality and egestion that leaves the pond. */
-  exportFraction: s(0.15),
+  exportFraction: s(0.50),
   /** R-30 settling/denitrification applied to the pool's EXCESS over the reference. */
-  nutrientSinkRate: s(0.08),
+  nutrientSinkRate: s(0.10),
   /** R-30 the pristine pool level for the canonical scenario. */
   nutrientReference: s(23),
   /** R-30 the undisturbed watershed supply, solved so the pool rests on the reference. */
@@ -113,13 +113,25 @@ export const oxygen = {
   reAeration: s(0.1),
   /** The aeration intervention's substituted rate (§10). */
   aerationRate: s(0.3),
-  /** O2 cost per unit of decomposed matter — sets the trough depth with the detritus flux. */
-  o2PerDecomp: s(0.04),
+  /** O2 cost per unit of decomposed matter — the standing sediment's ongoing draw (R-21). */
+  o2PerDecomp: s(0.03),
+  /**
+   * O2 cost per unit of FRESH dead matter arriving this tick — the BOD pulse (R-21).
+   *
+   * A newly dead bloom is labile: it is consumed far faster than the aged sediment, which is why a
+   * pond's oxygen sags when a bloom collapses but not in proportion to the mud already on the bottom.
+   * Without this term the demand is a function of the standing detritus alone, and the arithmetic
+   * then forbids the mission's trough: the pristine and post-crash stocks differ by less than a
+   * factor of two, so any sensitivity high enough to pull oxygen below 5 also makes the undisturbed
+   * pond hypoxic (finding F-12/F-13). Keying part of the demand to the arrival rate separates the
+   * two regimes by construction: a healthy pond has a small steady inflow, a collapsing bloom a burst.
+   */
+  o2PerBurst: s(0.045),
   /** O2 released per unit algae per tick, capped at photoCap. */
   o2PerPhoto: s(0.001),
   photoCap: d(0.5),
   /** Pond-wide basal consumption, mg/L per tick. */
-  respirationBasal: d(0.05),
+  respirationBasal: d(0.10),
 } as const;
 
 /** The canonical scenario's disruption (SCIENCE_MODEL §2). */
@@ -136,14 +148,14 @@ export const scenario = {
  * arithmetic and the seeded birth noise take over.
  */
 export const CANONICAL_INITIAL = {
-  nutrients: s(32.656),
-  algae: s(41.634),
-  weeds: s(64.258),
-  flea: s(75.009),
-  mayfly: s(63.358),
-  snail: s(63.633),
-  bluegill: s(7.306),
-  dragonfly: s(3.361),
-  detritus: s(18.232),
-  do: d(6.72),
+  nutrients: s(31.476),
+  algae: s(17.064),
+  weeds: s(78.449),
+  flea: s(63.456),
+  mayfly: s(56.542),
+  snail: s(55.565),
+  bluegill: s(18.974),
+  dragonfly: s(9.330),
+  detritus: s(8.998),
+  do: d(6.159),
 } as const;
